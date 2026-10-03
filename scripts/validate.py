@@ -47,7 +47,7 @@ def check_json():
 
 
 def check_markdown_links():
-    for md in [p for p in ROOT.rglob("*.md") if ".git" not in p.parts]:
+    for md in [p for p in ROOT.rglob("*.md") if ".git" not in p.parts and "node_modules" not in p.parts]:
         for target in re.findall(r"\]\(([^)]+)\)", md.read_text(encoding="utf-8")):
             if target.startswith(("http://", "https://", "#", "mailto:")):
                 continue

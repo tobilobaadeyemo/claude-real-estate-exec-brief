@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.0 (2026-10-03)
+
+### Added
+- `connector/`: paid remote MCP connector for Claude. Deterministic engine for marketing strategy, market brief, and campaign update; free first preview; credits charged per call; Paystack checkout, verification, and HMAC-verified webhooks; SQLite ledger; Dockerfile; 16 tests including an end-to-end MCP run
+- CI job for the connector (typecheck, test, build)
+
 ## 1.0.0 (2026-10-03)
 
 ### Added

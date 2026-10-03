@@ -34,6 +34,15 @@ Each marketing strategy comes in three versions from the same analysis:
 - **Decisions with triggers.** Each plan has dated review gates (Day 14, 30, 60) and a pre-agreed price step, so a later price cut is a rule being followed, not a surprise.
 - **Presenter-ready.** Includes a 60-second opening, the three numbers to remember, and answers to likely objections from each audience.
 
+## Free skill or paid connector
+
+| | Free skill (this repo) | Paid connector ([`connector/`](connector/README.md)) |
+|---|---|---|
+| Setup | Upload the zip to Claude | Paste a personal URL into Claude's custom connectors |
+| Numbers | Claude follows the method | Computed in code; identical every run |
+| Saved plans and weekly campaign updates | No | Yes |
+| Price | Free | First run free (diagnosis), then pay per call in naira |
+
 ## Install
 
 **Claude.ai / Claude Desktop**
