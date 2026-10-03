@@ -18,4 +18,4 @@ Open a [feedback issue](https://github.com/tobilobaadeyemo/claude-real-estate-ex
 - Lagos-specific facts (regulators, title types, norms) need a source or a "confirm with compliance or solicitor" flag.
 
 ## Releases
-Maintainers tag `vX.Y.Z` on `main`. The release workflow builds the zip and attaches it to a GitHub Release.
+On GitHub: Releases > Draft a new release > new tag `vX.Y.Z` targeting `main` > Publish. The release workflow builds the zip and attaches it. Pushing a `vX.Y.Z` tag also works.
