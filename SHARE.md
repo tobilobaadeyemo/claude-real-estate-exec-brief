@@ -7,6 +7,8 @@ Every link points to the repo, so stars, clones, downloads, and issues land here
 - Releases (download counts per release): https://github.com/tobilobaadeyemo/claude-real-estate-exec-brief/releases
 - Example brief: https://github.com/tobilobaadeyemo/claude-real-estate-exec-brief/blob/main/real-estate-exec-brief/examples/output-marketing-strategy-leadership.md
 
+Once the paid connector is live, add its landing page (`https://<your-domain>`) next to the repo link. The free skill brings people in; the connector is what they pay for.
+
 ## LinkedIn
 
 > Most Lagos listing decks fail in the first two minutes. They quote portal asking prices as "sales", ignore inflation, and have no plan for when the price is wrong.
