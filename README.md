@@ -4,7 +4,7 @@ A Claude skill that turns a listing and your company's sales data into a **marke
 
 Built for Lagos, Nigeria real estate teams. It handles Lagos-specific issues such as asking prices vs closed prices, naira vs USD for diaspora buyers, real vs nominal returns, title trust, and ARCON / NDPA / LASRERA compliance.
 
-**[Download the skill (.zip)](https://github.com/tobilobaadeyemo/claude-real-estate-exec-brief/releases/latest/download/real-estate-exec-brief.zip)** · [Example: leadership brief](real-estate-exec-brief/examples/output-marketing-strategy-leadership.md) · [Client version](real-estate-exec-brief/examples/output-marketing-strategy-client.md) · [Team version](real-estate-exec-brief/examples/output-marketing-strategy-team.md)
+**[Download the skill (.zip)](https://github.com/tobilobaadeyemo/claude-real-estate-exec-brief/raw/main/dist/real-estate-exec-brief.zip)** · [Example: leadership brief](real-estate-exec-brief/examples/output-marketing-strategy-leadership.md) · [Client version](real-estate-exec-brief/examples/output-marketing-strategy-client.md) · [Team version](real-estate-exec-brief/examples/output-marketing-strategy-team.md)
 
 ---
 
@@ -37,7 +37,7 @@ Each marketing strategy comes in three versions from the same analysis:
 ## Install
 
 **Claude.ai / Claude Desktop**
-1. Download [`real-estate-exec-brief.zip`](https://github.com/tobilobaadeyemo/claude-real-estate-exec-brief/releases/latest/download/real-estate-exec-brief.zip) from the latest release (or [from main](https://github.com/tobilobaadeyemo/claude-real-estate-exec-brief/raw/main/dist/real-estate-exec-brief.zip)).
+1. Download [`real-estate-exec-brief.zip`](https://github.com/tobilobaadeyemo/claude-real-estate-exec-brief/raw/main/dist/real-estate-exec-brief.zip) (also attached to each [release](https://github.com/tobilobaadeyemo/claude-real-estate-exec-brief/releases)).
 2. In Claude, open **Settings > Capabilities > Skills**, then upload the zip. (Skills must be enabled for your plan or workspace.)
 
 **Claude Code**

@@ -1,6 +1,10 @@
 name: Release
 
+# Runs when a release is published in the GitHub UI, or when a v* tag is pushed.
+# Builds the skill zip and attaches it to the release.
 on:
+  release:
+    types: [published]
   push:
     tags: ["v*"]
 
@@ -17,10 +21,15 @@ jobs:
           python-version: "3.12"
       - name: Build and validate
         run: ./scripts/build.sh
-      - name: Publish release
+      - name: Attach zip to release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || github.ref_name }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/real-estate-exec-brief.zip \
-            --title "Real Estate Exec Brief $GITHUB_REF_NAME" \
-            --notes "Upload real-estate-exec-brief.zip in Claude under Settings > Capabilities > Skills. See CHANGELOG.md for changes."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/real-estate-exec-brief.zip --clobber
+          else
+            gh release create "$TAG" dist/real-estate-exec-brief.zip \
+              --title "Real Estate Exec Brief $TAG" \
+              --notes "Upload real-estate-exec-brief.zip in Claude under Settings > Capabilities > Skills. See CHANGELOG.md for changes."
+          fi
