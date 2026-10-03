@@ -1,0 +1,3 @@
+lead_id,listing_id,created_date,channel,segment,price_band_ngn,qualified,qualified_date,viewing_date,offer_date,offer_ngn,closed,first_response_minutes,top_objection
+L-0001,LK-014,2026-10-12,meta,diaspora,500m_700m,yes,2026-10-13,2026-10-18,,,no,9,price
+L-0002,LK-014,2026-10-12,npc,local,500m_700m,no,,,,,no,22,

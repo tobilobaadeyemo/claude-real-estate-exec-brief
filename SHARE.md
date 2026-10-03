@@ -3,7 +3,7 @@
 Every link points to the repo, so stars, clones, downloads, and issues land here.
 
 - Repo: https://github.com/tobilobaadeyemo/claude-real-estate-exec-brief
-- Direct download: https://github.com/tobilobaadeyemo/claude-real-estate-exec-brief/raw/main/dist/real-estate-exec-brief.zip
+- Direct download (latest release, download count tracked): https://github.com/tobilobaadeyemo/claude-real-estate-exec-brief/releases/latest/download/real-estate-exec-brief.zip
 - Example brief: https://github.com/tobilobaadeyemo/claude-real-estate-exec-brief/blob/main/real-estate-exec-brief/examples/output-marketing-strategy-leadership.md
 
 ## LinkedIn
@@ -46,7 +46,7 @@ Every link points to the repo, so stars, clones, downloads, and issues land here
 >
 > We now have a Claude skill that turns a listing plus our closed-deal and CRM data into a presentation-ready marketing strategy: price position, buyer targets, channel plan, budget, funnel targets, and dated review gates. It produces a leadership version, an owner version (no internal economics), and a team execution version.
 >
-> Setup takes 2 minutes: download the zip from https://github.com/tobilobaadeyemo/claude-real-estate-exec-brief and upload it in Claude under Settings > Capabilities > Skills.
+> Setup takes 2 minutes: download the zip from https://github.com/tobilobaadeyemo/claude-real-estate-exec-brief/releases/latest and upload it in Claude under Settings > Capabilities > Skills.
 >
 > Ask: run it on one active listing this week and send me what it got wrong.
 
@@ -54,4 +54,5 @@ Every link points to the repo, so stars, clones, downloads, and issues land here
 
 1. Add repo topics (repo page > About > gear icon): `claude`, `claude-skills`, `real-estate`, `lagos`, `nigeria`, `proptech`, `marketing-strategy`, `ai`.
 2. Pin the repo on your GitHub profile.
-3. Ask early users to open an issue with feedback. Issues and stars signal an active project.
+3. Ask early users to file the feedback form (Issues > New issue). Issues and stars signal an active project.
+4. Release download counts show on each release's page under Assets.

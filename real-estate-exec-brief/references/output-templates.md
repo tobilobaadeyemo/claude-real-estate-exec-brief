@@ -6,6 +6,8 @@ Use Markdown. Keep the core brief to 2 pages. Anything after the line `---` (app
 
 Sections marked `{leadership}`, `{client}`, or `{team}` appear only in those versions. Unmarked sections appear in all three. Follow the audience matrix in `SKILL.md`.
 
+**Lease variant substitutions:** Price becomes annual rent (state advance-rent terms). Buyer becomes tenant. Close becomes signed lease. Offers become applications that pass screening. Add a line on lease term, service charge, and Lagos Tenancy Law checks for the solicitor. Expected fee uses the agreed letting fee basis.
+
 ```md
 # Marketing Strategy: [Listing name / ID], [District]
 Prepared by: [Presenter name, title] | Version: [Leadership / Client / Team] | Date: [YYYY-MM-DD]
@@ -156,4 +158,82 @@ Strongest counter-signal: ...
 [Same table as A, Appendix 1]
 
 Not legal, tax, or formal valuation advice. Title and legal matters require solicitor review; formal valuations require a registered estate surveyor and valuer.
+```
+
+## C. Intake request (minimum inputs missing)
+
+Send once, listing every gap. Do not draft the brief until price, size, title, and location are known.
+
+```md
+To build the [marketing strategy / market brief] for [listing], I need:
+
+**Required**
+- [ ] Exact location: district plus estate or street
+- [ ] Type, bedrooms, plot size (sqm), built-up area (sqm) if known
+- [ ] Owner's asking price (or asking rent) and floor, if there is one
+- [ ] Title status (C of O, Governor's Consent, registered deed, excision/gazette, none)
+- [ ] Sale or lease, and the target close date
+
+**Strongly recommended** (templates attached if you need a format)
+- [ ] Closed deals, last 12 to 24 months (closed_deals.csv)
+- [ ] CRM lead export, last 12 months (crm_leads.csv)
+- [ ] Spend and leads by channel (channel_costs.csv)
+- [ ] Commission or fee rate, budget cap
+
+**Who is this for?** Leadership, the property owner, or the marketing team?
+
+Without the recommended data I can still build it, but confidence will be Low and gaps will be marked.
+```
+
+## D. Weekly campaign update (`campaign_update`)
+
+One page. Compare cumulative actuals to the plan's cumulative pro-rata targets.
+
+```md
+# Campaign Update: [Listing], Week [n] (Day [d] of [total])
+Prepared by: [Name] | Period: [start] to [end] | Status: [On track / At risk / Off track]
+
+## Bottom Line
+[One sentence: where we are vs plan.] [One sentence: gate result or decision needed.]
+
+## Funnel vs Plan (cumulative)
+| Stage | Plan to date | Actual | % of plan |
+|---|---:|---:|---:|
+| Inquiries | ... | ... | ... |
+| Qualified leads | ... | ... | ... |
+| Viewings | ... | ... | ... |
+| Offers | ... | ... | ... |
+
+## Spend and Efficiency
+| Channel | Spend to date | Qualified leads | Cost per qualified lead | vs target |
+|---|---:|---:|---:|---|
+| ... | ₦... | ... | ₦... | ... |
+
+## What Buyers Are Saying
+Top 3 objections from viewing feedback, with the share of viewings citing each.
+
+## Gate Check
+| Gate | Due | Threshold | Result | Action |
+|---|---|---|---|---|
+| ... | ... | ... | Fired / Not fired / Not yet due | ... |
+
+## Changes This Week
+- [Creative, targeting, budget shifts, and why]
+
+## Next Week
+- [Actions with owners]
+```
+
+Status rule: On track if every stage is at 80% or more of plan; At risk if any stage is between 50% and 79%; Off track if any stage is below 50% or a gate fired without its action taken.
+
+## E. Portfolio allocation (several listings, one budget)
+
+```md
+## Budget Allocation: [Portfolio], [period]
+| Rank | Listing | Expected fee | P(close in window) | Marketing cost | Priority score | Funded |
+|---:|---|---:|---:|---:|---:|---|
+| 1 | ... | ₦... | ...% | ₦... | ... | Yes |
+Priority score = expected fee x P(close) / marketing cost.
+Shared campaigns: [segment: listings grouped]
+Unfunded: [listing: what it would take]
 ```

@@ -4,7 +4,7 @@ A Claude skill that turns a listing and your company's sales data into a **marke
 
 Built for Lagos, Nigeria real estate teams. It handles Lagos-specific issues such as asking prices vs closed prices, naira vs USD for diaspora buyers, real vs nominal returns, title trust, and ARCON / NDPA / LASRERA compliance.
 
-**[Download the skill (.zip)](https://github.com/tobilobaadeyemo/claude-real-estate-exec-brief/raw/main/dist/real-estate-exec-brief.zip)** · [See a full example brief](real-estate-exec-brief/examples/output-marketing-strategy-leadership.md)
+**[Download the skill (.zip)](https://github.com/tobilobaadeyemo/claude-real-estate-exec-brief/releases/latest/download/real-estate-exec-brief.zip)** · [Example: leadership brief](real-estate-exec-brief/examples/output-marketing-strategy-leadership.md) · [Client version](real-estate-exec-brief/examples/output-marketing-strategy-client.md) · [Team version](real-estate-exec-brief/examples/output-marketing-strategy-team.md)
 
 ---
 
@@ -13,7 +13,10 @@ Built for Lagos, Nigeria real estate teams. It handles Lagos-specific issues suc
 | Mode | Question it answers | Output |
 |---|---|---|
 | **Marketing strategy** (default) | How do we price, position, and market this listing to close on time and on budget? | 2-page brief + comps appendix + presenter notes |
-| **Market brief** | Should we hold, sell, lease, or reprice this asset or portfolio? | 1 to 2-page decision brief |
+| **Market brief** | Should we hold, sell, lease, or reprice this asset or portfolio? | 1 to 2-page decision brief ([example](real-estate-exec-brief/examples/output-market-brief.md)) |
+| **Campaign update** | Is the running campaign on track, and does a review gate fire? | 1-page weekly report |
+
+Works for sales and lettings, single listings or a portfolio sharing one budget.
 
 Each marketing strategy comes in three versions from the same analysis:
 
@@ -34,7 +37,7 @@ Each marketing strategy comes in three versions from the same analysis:
 ## Install
 
 **Claude.ai / Claude Desktop**
-1. Download [`real-estate-exec-brief.zip`](https://github.com/tobilobaadeyemo/claude-real-estate-exec-brief/raw/main/dist/real-estate-exec-brief.zip).
+1. Download [`real-estate-exec-brief.zip`](https://github.com/tobilobaadeyemo/claude-real-estate-exec-brief/releases/latest/download/real-estate-exec-brief.zip) from the latest release (or [from main](https://github.com/tobilobaadeyemo/claude-real-estate-exec-brief/raw/main/dist/real-estate-exec-brief.zip)).
 2. In Claude, open **Settings > Capabilities > Skills**, then upload the zip. (Skills must be enabled for your plan or workspace.)
 
 **Claude Code**
@@ -54,9 +57,11 @@ Attach what you have (closed deals, CRM lead export, listing details), then ask 
 
 > "Market brief: should we hold or sell our Ikoyi flats portfolio?"
 
+> "Week 3 update for LK-014. This week's CRM and spend exports are attached."
+
 Structured input example: [`examples/input-marketing-strategy.json`](real-estate-exec-brief/examples/input-marketing-strategy.json)
 
-**Best results** come from attaching your own closed deals and CRM data. Without them, the skill still runs, but it says where data is missing and marks confidence Low.
+**Best results** come from attaching your own closed deals and CRM data. No export ready? Use the CSV templates in [`assets/data-templates/`](real-estate-exec-brief/assets/data-templates/closed_deals.csv) (closed deals, CRM leads, channel costs). Without this data, the skill still runs, but it says where data is missing and marks confidence Low.
 
 ## Files
 
@@ -69,10 +74,11 @@ real-estate-exec-brief/
     marketing-strategy.md       # pricing, segments, positioning, channels, budget, funnel, gates, compliance
     output-templates.md         # brief templates for each mode and audience
     presenter-guide.md          # talk structure, slide mapping, Q&A bank
-  examples/
-    input-marketing-strategy.json
-    output-marketing-strategy-leadership.md
+  examples/                     # leadership, client, team versions of one listing; a market brief
+  assets/data-templates/        # CSV formats for closed deals, CRM leads, channel costs
 dist/real-estate-exec-brief.zip # upload-ready package
+evals/test-cases.md             # 14 pass/fail cases to run before a release
+scripts/                        # build.sh (zip + validate), validate.py
 ```
 
 ## Limits
@@ -83,12 +89,9 @@ dist/real-estate-exec-brief.zip # upload-ready package
 
 ## Feedback and contributions
 
-Used it on a real listing? [Open an issue](https://github.com/tobilobaadeyemo/claude-real-estate-exec-brief/issues/new) with what worked and what didn't, or send a pull request. If it saved you time, star the repo so others can find it.
+Used it on a real listing? [Share feedback](https://github.com/tobilobaadeyemo/claude-real-estate-exec-brief/issues/new/choose) on what worked and what didn't, or send a pull request (see [CONTRIBUTING.md](CONTRIBUTING.md)). If it saved you time, star the repo so others can find it.
 
-Rebuild the zip after changes:
-```bash
-rm -f dist/real-estate-exec-brief.zip && zip -r dist/real-estate-exec-brief.zip real-estate-exec-brief
-```
+After editing, rebuild the zip and validate: `./scripts/build.sh`. Changes are tracked in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

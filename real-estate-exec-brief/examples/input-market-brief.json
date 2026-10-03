@@ -1,0 +1,26 @@
+{
+  "mode": "market_brief",
+  "audience": "leadership",
+  "decision": "sell_or_lease",
+  "asset": {
+    "id": "IK-203",
+    "location": {
+      "district": "Ikoyi",
+      "lga": "Eti-Osa"
+    },
+    "type": "flat",
+    "bedrooms": 3,
+    "built_sqm": 210,
+    "title": "registered_deed",
+    "condition": "good",
+    "status": "vacant",
+    "acquired": "2022",
+    "service_charge_ngn_per_year": 4500000,
+    "maintenance_ngn_per_year": 1200000
+  },
+  "company_hurdle_rate_nominal": 0.15,
+  "internal_data": {
+    "closed_deals": "closed_deals_2025_2026.csv",
+    "lease_history": "leases_2022_2026.csv"
+  }
+}

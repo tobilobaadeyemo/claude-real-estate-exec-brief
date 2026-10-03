@@ -1,6 +1,7 @@
 ---
 name: real-estate-exec-brief
-description: Builds presentation-ready briefs for a Lagos, Nigeria real estate company. Two modes. (1) Listing marketing strategy: price position, list price and negotiation band, target buyer or tenant segments, positioning, channel plan, budget, funnel targets, review gates, risks, and presenter notes, in leadership, client (property owner), or marketing-team versions. (2) Market brief: hold, sell, lease, or reprice decision for a property or portfolio. Use when asked to market, price, launch, or relaunch a listing; plan a property campaign; prepare a property presentation or pitch for management, an owner, or the marketing team; or benchmark a Lagos property or portfolio against the market.
+license: MIT
+description: Builds presentation-ready briefs for a Lagos, Nigeria real estate company. Two modes. (1) Listing marketing strategy: price position, list price and negotiation band, target buyer or tenant segments, positioning, channel plan, budget, funnel targets, review gates, risks, and presenter notes, in leadership, client (property owner), or marketing-team versions. (2) Market brief: hold, sell, lease, or reprice decision for a property or portfolio. (3) Weekly campaign update against the plan's targets and review gates. Use when asked to market, price, launch, relaunch, or report on a listing campaign; plan a property campaign; prepare a property presentation or pitch for management, an owner, or the marketing team; or benchmark a Lagos property or portfolio against the market.
 ---
 
 # Real Estate Exec Brief (Lagos)
@@ -13,6 +14,9 @@ Turns company property data and market data into a short, evidence-backed brief 
 |---|---|---|---|
 | `marketing_strategy` (default) | A listing or set of listings must be sold or let | How do we price, position, and market this to close on time and on budget? | `references/output-templates.md` section A |
 | `market_brief` | Hold / sell / lease / reprice decision, portfolio review | Is this asset priced right, and what should we do with it? | `references/output-templates.md` section B |
+| `campaign_update` | A campaign from a marketing strategy is running and needs a progress report | Are we on track, and does a review gate fire? | `references/output-templates.md` section D |
+
+Variants inside these modes: **lease** (rent instead of price, tenant instead of buyer, signed lease instead of close; substitutions in section A of the templates) and **portfolio** (several listings sharing one budget; section E of the templates).
 
 Infer the mode from the request. A marketing strategy already contains the market position, so do not produce both unless asked.
 
@@ -52,7 +56,9 @@ Minimum to proceed (ask for all gaps in one message; never guess these):
 
 Useful, not blocking: condition, amenities, photos, owner's floor price, internal closed deals, CRM funnel and cost-per-lead history, commission rate, budget cap, owner constraints (viewing access, timeline, confidentiality).
 
-Structured input example: `examples/input-marketing-strategy.json`.
+Structured input examples: `examples/input-marketing-strategy.json`, `examples/input-market-brief.json`.
+Internal data: offer the CSV templates in `assets/data-templates/` when the user has no export ready. Column definitions are in `references/data-sources.md` section 6.
+Missing inputs: use the intake message in `references/output-templates.md` section C.
 
 ## Workflow
 
@@ -62,6 +68,7 @@ Structured input example: `examples/input-marketing-strategy.json`.
 4. **Strategy.**
    - `marketing_strategy`: pricing plan, segments, positioning, channels, budget, funnel, timeline, review gates, fallback, per `references/marketing-strategy.md`.
    - `market_brief`: apply the decision rules in `references/market-analysis.md` section 7.
+   - `campaign_update`: compare actuals to the plan's cumulative targets and evaluate each gate due, per `references/marketing-strategy.md` section 8.
 5. **Draft** in the template for the chosen mode and audience.
 6. **Presenter notes.** Add per `references/presenter-guide.md` unless the user opts out.
 7. **Quality gate.** Run the checklist below. Fix every failure before output.
@@ -75,7 +82,7 @@ Structured input example: `examples/input-marketing-strategy.json`.
 - **Dates, not freshness claims.** Give an as-of date per source. Do not write "updated X hours ago".
 - **Confidence.** State High, Medium, or Low with the reason (comp count, closed vs asking, missing inputs).
 - **One recommendation.** A fallback is allowed only as a dated trigger: "If X by date, then Y."
-- **Client version hygiene.** Never show commission split, internal margin, agent performance, other clients' data, or the internal fee-to-budget ratio.
+- **Client version hygiene.** Never show commission split, internal margin, agent performance, or the internal fee-to-budget ratio. Internal closed comps appear only anonymized (type, size, month, price; no address, owner, or buyer). Aggregated track-record statistics are allowed.
 - **Qualified review.** Title, legal, tax, and formal valuation questions are flagged for a solicitor or a registered estate surveyor and valuer. Do not opine on whether a title is valid.
 - **Compliance flags in every marketing plan.** ARCON pre-exposure vetting for paid adverts (including digital and influencer), NDPA 2023 lawful basis and opt-out for lead data and broadcast messages, LASRERA registration for practitioners on the deal. Tell the user to confirm current requirements with compliance.
 
@@ -107,4 +114,5 @@ Read only what the current step needs.
 | `references/marketing-strategy.md` | Pricing plan, segments, positioning, channels, budget, funnel, gates, compliance |
 | `references/output-templates.md` | Drafting the final brief |
 | `references/presenter-guide.md` | Writing presenter notes and anticipated Q&A |
-| `examples/` | Calibrating format and depth |
+| `examples/` | Calibrating format and depth: leadership, client, and team versions of one listing; a market brief |
+| `assets/data-templates/` | The user needs a format for closed deals, CRM leads, or channel costs |

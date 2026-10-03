@@ -24,7 +24,7 @@ Lagos has no public register of completed sale prices. Most public "market data"
 ## 2. Retrieval procedure
 
 1. Check which tools this session has (web search/fetch, file uploads, connected drives or bases).
-2. Pull internal data first. If not attached, ask for: closed deals (12 to 24 months), CRM lead export (12 months), cost per lead by channel, commission rate.
+2. Pull internal data first. If not attached, ask for: closed deals (12 to 24 months), CRM lead export (12 months), cost per lead by channel, commission rate. Offer the templates in section 6.
 3. Pull public data. Record URL, query or filter used, and as-of date for each source.
 4. If no web access: ask the user to paste or upload portal exports and the latest CBN rate and NBS CPI. If still unavailable, produce the brief with `[DATA NEEDED]` markers and confidence Low. Never fill gaps with remembered figures.
 
@@ -47,3 +47,44 @@ Lagos has no public register of completed sale prices. Most public "market data"
 |---|---|---|---|
 | Internal closed deals | 3 comps, list-vs-close discount (n=11) | 2026-09-30 | Lekki Phase 1, 4 to 6 bed detached |
 | NPC | 4 asking comps, 41 active listings | 2026-10-02 | Deduped from 63 raw |
+
+## 6. Internal data formats
+
+Templates live in `assets/data-templates/`. Any export with equivalent columns works; map names rather than asking the user to reformat.
+
+**closed_deals.csv** (comps, list-to-close discount, days on market)
+| Column | Meaning |
+|---|---|
+| deal_id | Internal reference |
+| district, estate_or_street, street_tier | Location; street_tier is `inner_close` or `main_road` |
+| property_type, bedrooms, plot_sqm, built_sqm | Physical attributes |
+| title | `c_of_o`, `governors_consent`, `registered_deed`, `excision_gazette`, `none` |
+| condition | `new`, `renovated`, `good`, `dated`, `shell` |
+| transaction | `sale` or `lease` (for lease, prices are annual rent) |
+| list_date, list_price_ngn | Launch date and price |
+| close_date, close_price_ngn | Completion date and price |
+| days_on_market | close_date minus list_date |
+| concessions | Anything that changes the effective price |
+| source | `internal` or `agent_reported` |
+
+**crm_leads.csv** (segment mix, conversion rates, response times, objections)
+| Column | Meaning |
+|---|---|
+| lead_id, listing_id, created_date | Identity and timing |
+| channel | `npc`, `propertypro`, `meta`, `google`, `agent`, `crm`, `walk_in`, `referral` |
+| segment | `local`, `diaspora`, `investor`, `corporate`, `developer` |
+| price_band_ngn | Band the lead asked about |
+| qualified, qualified_date | Meets the qualified-lead definition in `marketing-strategy.md` section 6 |
+| viewing_date, offer_date, offer_ngn, closed | Funnel progress |
+| first_response_minutes | Time to first reply |
+| top_objection | `price`, `title`, `location`, `finish`, `service_charge`, `flood`, `other` |
+
+**channel_costs.csv** (cost per qualified lead by channel)
+| Column | Meaning |
+|---|---|
+| period_start, period_end, listing_id, channel | Scope |
+| spend_ngn | Media plus listing fees for the period |
+| impressions, clicks | Where the channel reports them |
+| inquiries, qualified_leads | Outcomes attributed to the channel |
+
+Data protection: CRM exports contain personal data. Work with the minimum columns needed, never copy names or phone numbers into a brief, and follow the company's NDPA 2023 retention rules.
