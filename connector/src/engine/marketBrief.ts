@@ -1,4 +1,4 @@
-import { addDays, parseDate, pct } from "./format.js";
+import { addDays, ngn, parseDate, pct } from "./format.js";
 import {
   adjustComps,
   confidence,
@@ -112,6 +112,9 @@ export function buildMarketBrief(input: MarketBriefInput): MarketBrief {
   const domKnown = input.asset.days_listed !== undefined && input.segment_median_dom !== undefined;
   const stale = domKnown && input.asset.days_listed! > 1.5 * input.segment_median_dom!;
 
+  // Independent of the action, so a free preview does not hint at the locked recommendation.
+  if (premium !== undefined && !domKnown) warnings.push("Days listed and segment median days on market not supplied [DATA NEEDED: days listed, segment median DOM].");
+
   let action: BriefAction;
   let reason: string;
   let provisional = false;
@@ -121,14 +124,13 @@ export function buildMarketBrief(input: MarketBriefInput): MarketBrief {
     reason = `asking sits ${pct(premium!)} over the adjusted median; reprice into ${fmtRange(compSet)}`;
     supporting.push(`Asking is ${pct(premium!)} above the adjusted market median.`);
     if (stale) supporting.push(`Listed ${input.asset.days_listed} days, above 1.5x the segment median of ${input.segment_median_dom}.`);
-    else warnings.push("Reprice test incomplete: the methodology also needs days listed above 1.5x the segment median [DATA NEEDED: days listed, segment median DOM].");
   } else if (leaseCase && clearsHurdle !== false) {
     action = "Lease";
     reason = "the yield is well above the segment median and rents are holding up";
   } else if (heat.label === "Cold" && clearsHurdle === false) {
     action = "Sell";
     reason = "the market is cold and holding returns miss the hurdle";
-  } else if (input.owner_objective === "liquidity" && (heat.label === "Hot" || heat.label === "Warm") && (premium === undefined || premium <= 0.05)) {
+  } else if (input.owner_objective === "liquidity" && (heat.label === "Hot" || heat.label === "Warm") && (premium === undefined || priceBand(premium) === "At market" || priceBand(premium) === "Below market")) {
     action = "Sell";
     reason = "the owner wants liquidity, the market is not cold, and the asset can be sold at market";
   } else if (clearsHurdle === false) {
@@ -205,5 +207,5 @@ export function buildMarketBrief(input: MarketBriefInput): MarketBrief {
 }
 
 function fmtRange(set: CompSet): string {
-  return `₦${(set.min / 1e6).toFixed(1)}M to ₦${(set.max / 1e6).toFixed(1)}M`;
+  return `${ngn(set.min)} to ${ngn(set.max)}`;
 }

@@ -53,14 +53,16 @@ Faster access later: once your business has had at least one payout a week for f
 4. Ask again. You get a buy link. Open it, choose a pack, and pay with one of Paystack's test cards (Paystack docs, "Test Payments").
 5. The return page confirms the credits added. Ask Claude again: you get the full strategy.
 6. In the Paystack dashboard (test mode), the transaction shows in **NGN**.
-7. Check the proxy setting (it decides which visitor address the rate limits see). Do these two checks at least 10 seconds apart:
+7. Check the owner tools before real money depends on them. In Render, open your service > **Shell** and run `node /app/dist/src/admin.js status <your email>`. It should list your account and the test payment. If the Shell will not open, fix that now (Render's Shell docs), because held payments and lost URLs are fixed from there.
+8. Check the proxy setting (it decides which visitor address the rate limits see). Do these two checks at least 10 seconds apart:
    - In your browser, open `https://<your-service>.onrender.com/?proxy_check=1`
-   - In a computer terminal, run `curl -H "X-Forwarded-For: 1.2.3.4" "https://<your-service>.onrender.com/?proxy_check=1"`
+   - In a computer terminal, run `curl -H "X-Forwarded-For: 1.2.3.4" "https://<your-service>.onrender.com/?proxy_check=1"`. On Windows PowerShell, type `curl.exe` instead of `curl` (or use Command Prompt).
 
    In Render, open **Logs** and find the two lines with `"event":"proxy_check"`:
-   - First line: `client_ip` should be your own internet address (search "what is my IP" to compare). If it is a `10.x.x.x` address, raise `TRUST_PROXY` by 1 in Render's **Environment**.
+   - First line: `client_ip` should be your own internet address (search "what is my IP" to compare). If it is anything else (for example a `10.x.x.x` address, or a Cloudflare address such as `172.6x.x.x` or `162.158.x.x`), raise `TRUST_PROXY` by 1.
    - Second line: `client_ip` must **not** be `1.2.3.4`. If it is, lower `TRUST_PROXY` by 1.
-   - Repeat after any change until both checks pass.
+   - `TRUST_PROXY` is 3 on Render unless you set it. To change it, add `TRUST_PROXY` in your service's **Environment** page (it is deliberately not in `render.yaml`, so a later Blueprint sync does not undo your setting).
+   - Repeat after any change until both checks pass, and again after any change to `render.yaml` or your domain setup.
 
 ## Step 4: Switch to live money
 
@@ -92,19 +94,21 @@ Your other running costs are Render hosting. The connector makes no AI calls, so
 Payments that do not match a pack (wrong amount or currency, or a test payment on live keys) are **held for review**, never silently dropped. The buyer sees a "needs a manual check" page with your support email.
 
 Refunds and chargebacks are handled automatically:
-- **Refund** (from your Paystack dashboard): credits come off in proportion to the amount refunded, rounded in the buyer's favour. A full refund removes all of the pack's credits.
-- **Chargeback opened**: the pack's remaining credits are held. If you win the dispute, they come back; if the buyer wins, they stay removed.
+- **Refund** (from your Paystack dashboard): credits come off in proportion to the amount refunded, rounded in the buyer's favour. A full refund removes all of the pack's credits. Each refund counts once, even when Paystack resends the notice. A refund notice without an amount changes nothing and shows in `review`; check it in Paystack and run `reverse` if it was a full refund.
+- **Chargeback opened**: the pack's remaining credits are held. If you win the dispute, they come back. If the buyer wins (including when the dispute is auto-accepted because nobody responded in time), they stay removed; if only part of the payment is refunded, the hold is lifted and credits come off in proportion to that part.
+
+Abandoned checkouts (buyer opened Paystack and left) stay pending until you run `reconcile`, which closes them. A closed checkout still credits automatically if the buyer completes it later.
 
 Owner tools run from Render's **Shell** tab (your service > Shell):
 
 ```bash
-node dist/src/admin.js review                         # held and stuck payments
-node dist/src/admin.js reconcile                      # re-check pending payments with Paystack
-node dist/src/admin.js settle <reference> --force     # credit a held payment after you have checked it
-node dist/src/admin.js grant <email> <credits> <reason>
-node dist/src/admin.js reverse <reference> <reason>   # remove a refunded payment's credits
-node dist/src/admin.js rotate <email>                 # new connector URL for a user who lost theirs
-node dist/src/admin.js status <email>
+node /app/dist/src/admin.js review                         # held, disputed, and flagged payments; recent stuck checkouts
+node /app/dist/src/admin.js reconcile                      # re-check pending checkouts with Paystack; closes abandoned ones
+node /app/dist/src/admin.js settle <reference> --force     # credit a held payment after you have checked it
+node /app/dist/src/admin.js grant <email> <credits> <reason>
+node /app/dist/src/admin.js reverse <reference> <reason>   # remove a refunded payment's credits
+node /app/dist/src/admin.js rotate <email>                 # new connector URL for a user who lost theirs
+node /app/dist/src/admin.js status <email>
 ```
 
 Every held, credited, reversed, or voided payment is also written to the Render log as a JSON line.

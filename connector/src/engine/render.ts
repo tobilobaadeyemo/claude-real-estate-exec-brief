@@ -159,7 +159,9 @@ export function renderStrategy(plan: StrategyPlan, audience: Audience, ctx: Rend
     ? ` on a ${ngn(budget.total)} budget${showEconomics && budget.feeRatio ? ` (${(budget.feeRatio * 100).toFixed(1)}% of expected fee)` : ""}`
     : budget.partialTotal !== undefined ? ` on a budget of at least ${ngn(budget.partialTotal)} (incomplete)` : "";
   const priceLine = pricing.listAtFloor
-    ? `List at the owner's floor, ${w.money(pricing.list)}. The market-based price is lower: the ${w.ask} is ${pct(plan.premium)} vs the adjusted market median of ${w.money(plan.compSet.median)}.`
+    ? audience === "team"
+      ? `List at ${w.money(pricing.list)} (pre-approved; no negotiation room). The ${w.ask} is ${pct(plan.premium)} vs the adjusted market median of ${w.money(plan.compSet.median)}.`
+      : `List at the owner's floor, ${w.money(pricing.list)}. The market-based price is lower: the ${w.ask} is ${pct(plan.premium)} vs the adjusted market median of ${w.money(plan.compSet.median)}.`
     : pricing.keepAsk
       ? `Keep ${w.money(l.asking_price_ngn)}: the ${w.ask} is at market (${pct(plan.premium)} vs adjusted median ${w.money(plan.compSet.median)}).${pricing.bandSuggestion ? ` Consider ${w.money(pricing.bandSuggestion)} to sit under the round search band buyers filter by.` : ""}`
       : `List at ${w.money(pricing.list)}, not ${w.money(l.asking_price_ngn)}. The ${w.ask} is ${pct(plan.premium)} vs the adjusted market median of ${w.money(plan.compSet.median)}.`;
@@ -204,7 +206,7 @@ export function renderStrategy(plan: StrategyPlan, audience: Audience, ctx: Rend
       : `${pct(pricing.listPremium)} vs adj. median; search-band checked`;
   const pricingRows: string[][] = [[`List ${w.price.toLowerCase()}`, w.money(pricing.list), listBasis]];
   if (showFloor) {
-    pricingRows.push(["Floor", w.money(pricing.floor), pricing.floorBasis === "owner" ? `Owner's stated minimum${pricing.floorAboveMarket ? "; above every comp" : ""}` : "Adjusted comp low (no owner floor given)"]);
+    pricingRows.push(["Floor", w.money(pricing.floor), pricing.floorBasis === "owner" ? `Owner's stated minimum${pricing.floorAboveMarket ? "; above every comp" : ""}` : pricing.floor < plan.compSet.min ? `Price step; below the adjusted comp low of ${w.money(plan.compSet.min)} (no owner floor given)` : "Adjusted comp low (no owner floor given)"]);
     pricingRows.push(["Negotiation band", pricing.floor < pricing.list ? `${w.money(pricing.floor)} to ${w.money(pricing.list)}` : "None: list is at the floor", "Authorized negotiators only"]);
   }
   pricingRows.push(pricing.stepAvailable
@@ -326,7 +328,7 @@ function risksTable(plan: StrategyPlan, audience: Audience): string {
   if (supplyUp > 0.1) rows.push([`Supply up ${(supplyUp * 100).toFixed(0)}% YoY`, "M", "Price at market; lead with condition, power, and title; refresh creative at the traffic gate", "Strategist"]);
   if (diaspora) rows.push(["Diaspora fraud concern lowers conversion", "M", "Trust stack, solicitor-held funds, live video viewings", "Sales lead"]);
   if (audience !== "client") rows.push(["ARCON approval delays paid start", "M", "Portals, agents, and organic carry week 1", "Marketing ops"]);
-  if (plan.pricing.floorAboveMarket) rows.push(["Floor above every comparable", "H", "Reset the floor with the owner before launch", "Head of Sales"]);
+  if (plan.pricing.floorAboveMarket && audience !== "team") rows.push(["Floor above every comparable", "H", "Reset the floor with the owner before launch", "Head of Sales"]);
   if (diaspora && plan.input.fx_ngn_per_usd && audience !== "team") rows.push(["FX moves change the USD price", "L", "Refresh USD figures monthly", "Strategist"]);
   rows.push(["Flood or drainage questions at viewings", "L", "Disclose drainage history `[DATA NEEDED: owner flood history]`", "Sales lead"]);
   if (audience === "client") return table(["Risk", "How we handle it"], rows.map((r) => [r[0], r[2]]));

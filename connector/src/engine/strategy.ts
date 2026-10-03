@@ -326,11 +326,11 @@ export function buildStrategy(input: StrategyInput): StrategyPlan {
   let expectedCloseBasis: string;
   let atAsk: StrategyPlan["outcomes"]["atAsk"];
   let atList: StrategyPlan["outcomes"]["atList"];
-  if (tr && Math.abs(listPremium) <= 0.05) {
+  if (tr && priceBand(listPremium) === "At market") {
     expectedClose = list * (1 + tr.at_market_close_vs_list_pct / 100);
     expectedCloseBasis = `list ${tr.at_market_close_vs_list_pct}% (internal at-market history${tr.at_market_n ? `, n=${tr.at_market_n}` : ""})`;
     atList = { close: expectedClose, dom: tr.at_market_dom };
-    if (tr.above_market_close_vs_list_pct !== undefined && premium > 0.05) {
+    if (tr.above_market_close_vs_list_pct !== undefined && (band === "Premium" || band === "Overpriced")) {
       atAsk = { close: listing.asking_price_ngn * (1 + tr.above_market_close_vs_list_pct / 100), dom: tr.above_market_dom };
     }
   } else if (input.list_to_close_discount_pct !== undefined) {

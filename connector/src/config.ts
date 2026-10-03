@@ -102,6 +102,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     keyMode,
     packs: parsePacks(env.CREDIT_PACKS),
     supportEmail: env.SUPPORT_EMAIL || undefined,
-    trustProxy: parseTrustProxy(env.TRUST_PROXY),
+    // Render (which sets RENDER=true) sits 3 hops in front of the app; TRUST_PROXY overrides it.
+    trustProxy: parseTrustProxy(env.TRUST_PROXY ?? (env.RENDER === "true" ? "3" : undefined)),
   };
 }

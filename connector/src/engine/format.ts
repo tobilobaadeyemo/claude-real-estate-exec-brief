@@ -13,7 +13,8 @@ export function ngn(value: number, millionDecimals = 1): string {
   const sign = value < 0 ? "-" : "";
   const abs = Math.abs(value);
   if (abs >= 1e9 || Number((abs / 1e6).toFixed(millionDecimals)) >= 1000) return `${sign}₦${trimNumber(abs / 1e9, 2)}B`;
-  if (abs >= 1e6 || Math.round(abs / 1e3) >= 1000) return `${sign}₦${trimNumber(abs / 1e6, millionDecimals)}M`;
+  // Two decimals below ₦10M, so common rents (₦2.55M vs ₦2.45M) and budget lines stay distinct.
+  if (abs >= 1e6 || Math.round(abs / 1e3) >= 1000) return `${sign}₦${trimNumber(abs / 1e6, abs < 9.995e6 ? Math.max(millionDecimals, 2) : millionDecimals)}M`;
   if (abs >= 1e3 || Math.round(abs) >= 1000) return `${sign}₦${trimNumber(abs / 1e3, 0)}k`;
   return `${sign}₦${Math.round(abs)}`;
 }

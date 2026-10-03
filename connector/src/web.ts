@@ -109,7 +109,7 @@ export function privacyPage(config: Config): string {
 <p>We store: your email (for receipts), a hash of your connector token, your credit balance and ledger, payment references, and the listing inputs of strategies you pay for (so audience versions and campaign updates work).</p>
 <p>We do not ask for client names, phone numbers, or addresses. Comparable descriptions should contain type and size only.</p>
 <p>Delete your saved plans at any time with the <code>delete_my_data</code> tool in Claude. Card details are handled by Paystack and never reach this service.</p>
-<p>Server logs record payment references and, once after each restart, one request's IP address to check the proxy setup. They never record connector URLs on our side.</p>
+<p>Server logs record payment references and, when a proxy check is requested (a page opened with ?proxy_check=1, at most once every 10 seconds), the requesting IP address and forwarding chain, to verify the hosting setup. They never record connector URLs on our side.</p>
 <p>We process data under the Nigeria Data Protection Act 2023.${config.supportEmail ? ` Requests: ${escape(config.supportEmail)}.` : ""}</p>`,
   );
 }

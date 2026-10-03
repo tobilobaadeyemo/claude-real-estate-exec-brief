@@ -23,10 +23,10 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      # Proxy hops in front of the app (reported as 3 on Render: Cloudflare, load balancer, router).
-      # Check the "proxy_check" log line after the first visit and adjust if client_ip is not the visitor's IP.
-      - key: TRUST_PROXY
-        value: "3"
+      # TRUST_PROXY (proxy hops in front of the app) defaults to 3 on Render and is deliberately not
+      # set here: a value set in this file would overwrite a dashboard correction on every Blueprint sync.
+      # Run the proxy check in connector/GO-LIVE.md (Step 3, item 8) and add TRUST_PROXY in the
+      # dashboard only if the check says to.
       - key: DATABASE_PATH
         value: /data/connector.db
       - key: PAYSTACK_SECRET_KEY

@@ -19,7 +19,7 @@ import type { PaystackClient, VerifiedTransaction } from "../src/paystack.js";
 import { bandAdjust, buildStrategy, flagsFor } from "../src/engine/strategy.js";
 import { buildMarketBrief } from "../src/engine/marketBrief.js";
 import { buildCampaignUpdate } from "../src/engine/campaign.js";
-import { renderCampaignUpdate, renderStrategy, renderStrategyPreview } from "../src/engine/render.js";
+import { renderCampaignUpdate, renderMarketBriefPreview, renderStrategy, renderStrategyPreview } from "../src/engine/render.js";
 import { ngn, parseDate, usd } from "../src/engine/format.js";
 import { priceBand } from "../src/engine/market.js";
 import { IK203, LK014 } from "./fixtures.js";
@@ -129,9 +129,13 @@ test("payments-4: refund and chargeback webhooks take the credits back", async (
   store.settlePayment(p.reference, { amount: p.amount_kobo, currency: "NGN" }, "test");
   store.charge(account.id, 4, "test");
   assert.equal(await webhook({ event: "refund.processed", data: { transaction_reference: p.reference } }), 200);
+  assert.equal(store.getPayment(p.reference)!.status, "paid", "a refund without an amount changes nothing");
+  assert.match(store.getPayment(p.reference)!.review_reason ?? "", /without an amount/);
+  assert.equal(store.getAccount(account.id)!.credits, 6);
+  assert.equal(await webhook({ event: "refund.processed", data: { transaction_reference: p.reference, refund_reference: "rf_full", amount: String(p.amount_kobo) } }), 200);
   assert.equal(store.getPayment(p.reference)!.status, "reversed");
   assert.equal(store.getAccount(account.id)!.credits, 0);
-  assert.equal(await webhook({ event: "refund.processed", data: { transaction_reference: p.reference } }), 200);
+  assert.equal(await webhook({ event: "refund.processed", data: { transaction_reference: p.reference, refund_reference: "rf_full", amount: String(p.amount_kobo) } }), 200);
   const p2 = store.createPayment(account.id, DEFAULT_PACKS[0], "test");
   store.settlePayment(p2.reference, { amount: p2.amount_kobo, currency: "NGN" }, "test");
   assert.equal(await webhook({ event: "charge.dispute.create", data: { transaction: { reference: p2.reference } } }), 200);
@@ -529,7 +533,7 @@ test("fix-review security-1: a full limiter evicts the oldest key instead of loc
 test("fix-review security-2: privilege drop refuses data directories outside DATA_ROOT or behind symlinks", async () => {
   const { dropPrivileges } = await import("../src/server.js");
   if (process.getuid?.() !== 0) return;
-  assert.throws(() => dropPrivileges("/lib/connector.db", { RUN_AS_UID: "1000" }), /must be inside \/data/);
+  assert.throws(() => dropPrivileges("/lib/connector.db", { RUN_AS_UID: "1000" }), /persistent disk mounted at \/data/);
   const root = mkdtempSync(join(tmpdir(), "root-"));
   const outside = mkdtempSync(join(tmpdir(), "outside-"));
   symlinkSync(outside, join(root, "linked"));
@@ -578,4 +582,160 @@ test("fix-review security-5: +tags and Gmail dots do not unlock extra previews",
   assert.match(textOf(await cb.callTool({ name: "marketing_strategy", arguments: args })), /free preview has been used/);
   await ca.close();
   await cb.close();
+});
+
+// --- Fix-review, round 3 ----------------------------------------------------------------------
+
+const closedComps = (prices: number[]) =>
+  prices.map((price_ngn, i) => ({ label: `C${i + 1}`, description: "comparable", status: "closed" as const, date: "Aug 2026", price_ngn, source: "Closed: internal" }));
+
+function paidAgency(email: string) {
+  const { account } = store.createAccount(email);
+  const p = store.createPayment(account.id, DEFAULT_PACKS[2], "test");
+  store.settlePayment(p.reference, { amount: p.amount_kobo, currency: "NGN" }, "test");
+  return { account, p };
+}
+
+test("fix-review-3 payments-1: Paystack's string refund amount is a partial refund, not a full one", async () => {
+  const { account, p } = paidAgency("string-refund@example.com");
+  const payload = { event: "refund.processed", data: { transaction_reference: p.reference, refund_reference: "132013318360", amount: "500000", currency: "NGN" } };
+  assert.equal(await webhook(payload), 200);
+  assert.equal(store.getAccount(account.id)!.credits, 39, "₦5,000 of ₦160,000 refunded: 1 of 40 credits off");
+  assert.equal(store.getPayment(p.reference)!.status, "paid");
+});
+
+test("fix-review-3 payments-2: a redelivered refund is applied once", async () => {
+  const { account, p } = paidAgency("redelivered-refund@example.com");
+  const payload = { event: "refund.processed", data: { transaction_reference: p.reference, refund_reference: "rf_half", amount: 8_000_000 } };
+  assert.equal(await webhook(payload), 200);
+  assert.equal(await webhook(payload), 200);
+  assert.equal(store.getAccount(account.id)!.credits, 20);
+  assert.equal(store.getPayment(p.reference)!.status, "paid");
+  assert.equal(store.getPayment(p.reference)!.refunded_kobo, 8_000_000);
+  assert.equal(store.refundPayment(p.reference, 8_000_000, "rf_rest").status, "refunded", "a different refund still counts");
+  assert.equal(store.getAccount(account.id)!.credits, 0);
+});
+
+test("fix-review-3 payments-3: auto-accepted disputes reverse; partially accepted ones refund in proportion", async () => {
+  const { account, p } = paidAgency("auto-accepted@example.com");
+  await webhook({ event: "charge.dispute.create", data: { transaction: { reference: p.reference } } });
+  assert.equal(await webhook({ event: "charge.dispute.resolve", data: { resolution: "auto-accepted", transaction: { reference: p.reference, status: "reversed" } } }), 200);
+  assert.equal(store.getPayment(p.reference)!.status, "reversed");
+  assert.equal(store.getAccount(account.id)!.credits, 0);
+
+  const second = paidAgency("partly-accepted@example.com");
+  await webhook({ event: "charge.dispute.create", data: { transaction: { reference: second.p.reference } } });
+  assert.equal(store.getAccount(second.account.id)!.credits, 0, "held during the dispute");
+  const resolve = { event: "charge.dispute.resolve", data: { resolution: "merchant-accepted", refund_amount: "8000000", transaction: { reference: second.p.reference } } };
+  assert.equal(await webhook(resolve), 200);
+  assert.equal(store.getPayment(second.p.reference)!.status, "paid");
+  assert.equal(store.getAccount(second.account.id)!.credits, 20, "half refunded: half the credits come back");
+});
+
+test("fix-review-3 security-1: one IP cannot cycle free accounts to create checkouts in bulk", async () => {
+  const localStore = new Store(":memory:");
+  const localApp = createApp({ config, store: localStore, paystack }).listen(0);
+  await new Promise((r) => localApp.once("listening", r));
+  const localBase = `http://127.0.0.1:${(localApp.address() as AddressInfo).port}`;
+  try {
+    const statuses: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      const { account } = localStore.createAccount(`bulk${i}@example.com`);
+      const checkout = localStore.getOrCreateCheckout(account.id);
+      for (let j = 0; j < 16; j++) {
+        const res = await fetch(`${localBase}/buy/${checkout}`, { method: "POST", redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "pack=single" });
+        statuses.push(res.status);
+      }
+    }
+    assert.equal(statuses.filter((s) => s === 303).length, 60);
+    assert.equal(statuses.filter((s) => s === 429).length, 4);
+  } finally {
+    localApp.close();
+    localStore.close();
+  }
+});
+
+test("fix-review-3 ops-7: abandoned checkouts leave the review list but still credit if completed", () => {
+  const { account } = store.createAccount("abandoned@example.com");
+  const p = store.createPayment(account.id, DEFAULT_PACKS[0], "test");
+  store.db.prepare("UPDATE payments SET created_at = ? WHERE reference = ?").run("2026-01-01T00:00:00.000Z", p.reference);
+  assert.ok(store.listPayments(["pending"], 30, 48 * 60).every((x) => x.reference !== p.reference), "older than 48 hours: not listed in review");
+  assert.ok(store.markAbandoned(p.reference, "paystack status abandoned"));
+  assert.equal(store.getPayment(p.reference)!.status, "abandoned");
+  assert.equal(store.settlePayment(p.reference, { amount: p.amount_kobo, currency: "NGN" }, "test"), "credited");
+  assert.equal(store.getAccount(account.id)!.credits, 3);
+});
+
+test("fix-review-3 engine-1: the team version never names the owner's floor when the list is set by it", () => {
+  const plan = buildStrategy({ ...LK014, listing: { ...LK014.listing, floor_price_ngn: 620_000_000 } });
+  assert.ok(plan.pricing.listAtFloor);
+  const team = renderStrategy(plan, "team", ctx);
+  assert.doesNotMatch(team, /owner's floor|Floor above|floor of/i);
+  assert.match(renderStrategy(plan, "client", ctx), /owner's floor/);
+});
+
+test("fix-review-3 engine-2: a default floor below every comp is labelled as the price step", () => {
+  const plan = buildStrategy({
+    ...LK014,
+    listing: { ...LK014.listing, floor_price_ngn: undefined },
+    comps: closedComps([501e6, 505e6, 509e6]),
+    heat: { nominal_price_change_pct: 5, cpi_yoy_pct: 15, inquiries_change_pct: -30 },
+  });
+  assert.ok(plan.pricing.floor < plan.compSet.min);
+  const out = renderStrategy(plan, "leadership", ctx);
+  assert.match(out, /\| Floor \| ₦480M \| Price step; below the adjusted comp low of ₦501M/);
+  assert.doesNotMatch(out, /\| Floor \| ₦480M \| Adjusted comp low/);
+});
+
+test("fix-review-3 engine-3: a Hot list at exactly +5% keeps the track record", () => {
+  const plan = buildStrategy({
+    ...LK014,
+    listing: { ...LK014.listing, asking_price_ngn: 230_000_000, floor_price_ngn: undefined },
+    comps: closedComps([190e6, 200e6, 210e6]),
+    heat: { nominal_price_change_pct: 30, cpi_yoy_pct: 15, dom_now: 40, dom_year_ago: 60, listings_now: 30, listings_year_ago: 40, inquiries_change_pct: 40 },
+  });
+  assert.equal(plan.heat.label, "Hot");
+  assert.equal(plan.pricing.list, 210_000_000);
+  assert.ok(plan.outcomes.atList, "track record applies");
+  assert.equal(Math.round(plan.outcomes.expectedClose), 203_700_000);
+});
+
+test("fix-review-3 engine-4: ₦1M to ₦10M amounts keep two decimals", () => {
+  assert.equal(ngn(2_550_000), "₦2.55M");
+  assert.equal(ngn(2_450_000), "₦2.45M");
+  assert.equal(ngn(2_500_000), "₦2.5M");
+  assert.equal(ngn(1_250_000), "₦1.25M");
+  assert.equal(ngn(9_996_000), "₦10M");
+  assert.equal(ngn(12_340_000), "₦12.3M");
+});
+
+test("fix-review-3 engine-5 / engine-6 / engine-8: market brief edge cases", () => {
+  const liquidity = buildMarketBrief({ ...IK203, asset: { ...IK203.asset, asking_price_ngn: 630_000_000 }, comps: closedComps([590e6, 600e6, 610e6]), heat: { inquiries_change_pct: 0 }, owner_objective: "liquidity" });
+  assert.equal(liquidity.action, "Sell", "+5% is at market: liquidity sells");
+
+  const reprice = buildMarketBrief({ ...IK203, asset: { ...IK203.asset, asking_price_ngn: 700_000_000 }, comps: closedComps([590e6, 600e6, 610e6]) });
+  assert.equal(reprice.action, "Reprice");
+  const hold = buildMarketBrief({ ...IK203, asset: { ...IK203.asset, asking_price_ngn: 600_000_000 }, comps: closedComps([590e6, 600e6, 610e6]) });
+  assert.deepEqual(reprice.warnings.filter((w) => /days/i.test(w)), hold.warnings.filter((w) => /days/i.test(w)), "the DOM warning does not depend on the action");
+  assert.doesNotMatch(renderMarketBriefPreview(reprice, ctx), /Reprice test|\*\*Reprice\*\*/);
+
+  const big = buildMarketBrief({ ...IK203, asset: { ...IK203.asset, asking_price_ngn: 1_500_000_000, days_listed: 200 }, segment_median_dom: 90, comps: closedComps([1.2e9, 1.25e9, 1.3e9]) });
+  assert.match(big.reason, /₦1\.2B to ₦1\.3B/);
+});
+
+test("fix-review-3 engine-7: tiny funnel rates are refused before charging", async () => {
+  const { account, token } = store.createAccount("tiny-rates@example.com");
+  store.grant(account.id, 9, "seed");
+  const client = await connect(`${base}/mcp/${token}`);
+  const args = { ...LK014, funnel_rates: { inquiry_to_qualified: 1e-120, qualified_to_viewing: 0.35, viewing_to_offer: 0.15, offer_to_close: 0.5 } } as unknown as Record<string, unknown>;
+  const result = await client.callTool({ name: "marketing_strategy", arguments: args });
+  assert.ok(result.isError);
+  assert.equal(store.getAccount(account.id)!.credits, 9);
+  await client.close();
+});
+
+test("fix-review-3 ops-4: TRUST_PROXY defaults to 3 on Render and can still be overridden", () => {
+  assert.equal(loadConfig({ RENDER: "true" }).trustProxy, 3);
+  assert.equal(loadConfig({ RENDER: "true", TRUST_PROXY: "2" }).trustProxy, 2);
+  assert.equal(loadConfig({}).trustProxy, 0);
 });

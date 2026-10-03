@@ -66,6 +66,16 @@ function eventReference(data: Record<string, unknown> | undefined): string | und
   return candidates.find((c): c is string => typeof c === "string" && c.length > 0);
 }
 
+/** Paystack sends some amounts as numbers and some as strings ("5000"); both are kobo. */
+export function koboOf(value: unknown): number | undefined {
+  const n = typeof value === "number" || (typeof value === "string" && value.trim() !== "") ? Number(value) : Number.NaN;
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : undefined;
+}
+
+function idOf(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : typeof value === "number" ? String(value) : undefined;
+}
+
 export interface AppDeps {
   config: Config;
   store: Store;
@@ -112,15 +122,18 @@ export function createApp({ config, store, paystack }: AppDeps) {
         const tx = await paystack.verify(reference);
         if (tx.status === "success") store.settlePayment(tx.reference, tx, config.keyMode);
       } else if (event.event === "refund.processed" && reference) {
-        // Partial refunds remove credits in proportion; a refund with no amount is treated as full.
-        const amount = typeof event.data?.amount === "number" ? event.data.amount : undefined;
-        store.refundPayment(reference, amount);
+        // Partial refunds remove credits in proportion, once per refund reference (webhooks are retried).
+        store.refundPayment(reference, koboOf(event.data?.amount), idOf(event.data?.refund_reference) ?? idOf(event.data?.id));
       } else if (event.event === "charge.dispute.create" && reference) {
         store.holdForDispute(reference);
       } else if (event.event === "charge.dispute.resolve" && reference) {
-        // "declined": the merchant declined the chargeback and keeps the money. "merchant-accepted": the buyer is refunded.
+        // "declined": the merchant declined the chargeback and keeps the money. "merchant-accepted" and
+        // "auto-accepted" (no response in time), or a reversed transaction: the buyer is refunded, in part
+        // when refund_amount is below the amount paid.
         const resolution = String(event.data?.resolution ?? "");
-        store.resolveDispute(reference, resolution === "declined" ? true : resolution === "merchant-accepted" ? false : undefined);
+        const txStatus = String((event.data?.transaction as Record<string, unknown> | undefined)?.status ?? "");
+        const buyerWon = resolution === "merchant-accepted" || resolution === "auto-accepted" || txStatus === "reversed";
+        store.resolveDispute(reference, resolution === "declined" ? true : buyerWon ? false : undefined, koboOf(event.data?.refund_amount));
       }
       res.status(200).end();
     } catch (err) {
@@ -162,6 +175,8 @@ export function createApp({ config, store, paystack }: AppDeps) {
   // Valid purchase attempts are limited per account and IP, with a higher ceiling per account,
   // so buyers behind a shared proxy or carrier NAT never block each other, and someone holding an
   // account's buy link cannot lock its owner out with junk submissions (those are rejected first).
+  // The hourly per-IP ceiling stops one address from cycling free accounts to create checkouts in bulk.
+  const purchasePerIp = rateLimit(60, 3_600_000, ipOf);
   const purchasePerAccountIp = rateLimit(20, 3_600_000, (req) => `${res_locals(req).accountId}:${ipOf(req)}`);
   const purchasePerAccount = rateLimit(100, 3_600_000, (req) => String(res_locals(req).accountId));
   app.post(
@@ -184,6 +199,7 @@ export function createApp({ config, store, paystack }: AppDeps) {
       res_locals(req).pack = pack;
       next();
     },
+    purchasePerIp,
     purchasePerAccountIp,
     purchasePerAccount,
     async (req, res) => {
@@ -216,7 +232,7 @@ export function createApp({ config, store, paystack }: AppDeps) {
       return;
     }
     try {
-      if ((payment.status === "pending" || payment.status === "review") && store.claimVerifySlot(reference)) {
+      if ((payment.status === "pending" || payment.status === "review" || payment.status === "abandoned") && store.claimVerifySlot(reference)) {
         const tx = await paystack.verify(reference);
         if (tx.status === "success") store.settlePayment(tx.reference, tx, config.keyMode);
       }
@@ -318,7 +334,7 @@ export function dropPrivileges(databasePath: string, env: NodeJS.ProcessEnv = pr
   const dbPath = resolve(databasePath);
   const dir = dirname(dbPath);
   if (root === "/" || (dir !== root && !dir.startsWith(`${root}/`))) {
-    throw new Error(`Refusing to take ownership of ${dir}: DATABASE_PATH must be inside ${root} (set DATA_ROOT to change it)`);
+    throw new Error(`Refusing to take ownership of ${dir}: DATABASE_PATH must be on the persistent disk mounted at ${root} (for example ${root}/connector.db)`);
   }
   mkdirSync(dir, { recursive: true });
   const realRoot = realpathSync(root);

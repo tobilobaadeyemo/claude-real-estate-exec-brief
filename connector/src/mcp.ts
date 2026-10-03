@@ -93,10 +93,10 @@ const strategyShape = {
     .describe("Share of qualified inquiries by segment for this price band, from the CRM"),
   funnel_rates: z
     .object({
-      inquiry_to_qualified: num().gt(0).max(1),
-      qualified_to_viewing: num().gt(0).max(1),
-      viewing_to_offer: num().gt(0).max(1),
-      offer_to_close: num().gt(0).max(1),
+      inquiry_to_qualified: num().min(0.001).max(1),
+      qualified_to_viewing: num().min(0.001).max(1),
+      viewing_to_offer: num().min(0.001).max(1),
+      offer_to_close: num().min(0.001).max(1),
     })
     .optional()
     .describe("CRM conversion rates as fractions; omit to use labeled placeholders"),
@@ -176,8 +176,11 @@ function strategyHash(input: StrategyInput): string {
 
 /** Guards against a defect producing impossible numbers on a paid brief. */
 function assertFinitePlan(plan: StrategyPlan): void {
-  const values = [plan.compSet.median, plan.compSet.min, plan.compSet.max, plan.premium, plan.pricing.list, plan.pricing.step, plan.pricing.floor, plan.outcomes.expectedClose];
-  if (values.some((v) => !Number.isFinite(v)) || plan.pricing.list <= 0) throw new Error("the inputs produce non-finite prices; check comp prices and adjustments");
+  const prices = [plan.compSet.median, plan.compSet.min, plan.compSet.max, plan.premium, plan.pricing.list, plan.pricing.step, plan.pricing.floor, plan.outcomes.expectedClose];
+  if (prices.some((v) => !Number.isFinite(v)) || plan.pricing.list <= 0) throw new Error("the inputs produce non-finite prices; check comp prices and adjustments");
+  const { funnel: f, budget: b } = plan;
+  const totals = [f.inquiries, f.qualified, f.viewings, f.offers, b.variable, b.total, b.partialTotal, b.feeRatio, ...plan.channels.flatMap((c) => [c.budget, c.inquiries])];
+  if (totals.some((v) => v !== undefined && !Number.isFinite(v))) throw new Error("the inputs produce a non-finite funnel or budget; check funnel_rates and costs");
 }
 
 export function createMcpServer(account: Account, store: Store, config: Config): McpServer {

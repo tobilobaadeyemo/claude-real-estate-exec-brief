@@ -29,7 +29,7 @@ export interface StoredPlan {
  * and come back if the merchant wins. reversed: fully refunded or a chargeback lost. voided: a test-mode
  * payment cancelled when the service switched to live keys.
  */
-export type PaymentStatus = "pending" | "paid" | "review" | "disputed" | "reversed" | "voided";
+export type PaymentStatus = "pending" | "paid" | "review" | "disputed" | "reversed" | "voided" | "abandoned";
 
 export interface Payment {
   reference: string;
@@ -94,6 +94,12 @@ CREATE TABLE IF NOT EXISTS plans (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS plans_account ON plans(account_id);
+CREATE TABLE IF NOT EXISTS refunds (
+  refund_key TEXT PRIMARY KEY,
+  payment_reference TEXT NOT NULL,
+  amount_kobo INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
 `;
 
 /** Columns added after the first release; applied idempotently on startup. */
@@ -310,12 +316,24 @@ export class Store {
     return this.db.prepare("SELECT * FROM payments WHERE reference = ?").get(reference) as Payment | undefined;
   }
 
-  listPayments(statuses: PaymentStatus[], olderThanMinutes = 0): Payment[] {
-    const cutoff = new Date(Date.now() - olderThanMinutes * 60_000).toISOString();
+  /** Payments in these statuses created between `newerThanMinutes` and `olderThanMinutes` ago. */
+  listPayments(statuses: PaymentStatus[], olderThanMinutes = 0, newerThanMinutes = Infinity): Payment[] {
+    const at = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
     const marks = statuses.map(() => "?").join(", ");
+    const since = Number.isFinite(newerThanMinutes) ? at(newerThanMinutes) : "";
     return this.db
-      .prepare(`SELECT * FROM payments WHERE status IN (${marks}) AND created_at <= ? ORDER BY created_at`)
-      .all(...statuses, cutoff) as Payment[];
+      .prepare(`SELECT * FROM payments WHERE status IN (${marks}) AND created_at <= ? AND created_at >= ? ORDER BY created_at`)
+      .all(...statuses, at(olderThanMinutes), since) as Payment[];
+  }
+
+  /** Paid payments with a note for the owner, such as a refund that arrived without an amount. */
+  flaggedPaidPayments(): Payment[] {
+    return this.db.prepare("SELECT * FROM payments WHERE status = 'paid' AND review_reason IS NOT NULL ORDER BY created_at").all() as Payment[];
+  }
+
+  /** A checkout Paystack reports as abandoned, failed, or unknown. It can still settle if the buyer completes it later. */
+  markAbandoned(reference: string, reason: string): boolean {
+    return this.db.prepare("UPDATE payments SET status = 'abandoned', review_reason = ? WHERE reference = ? AND status = 'pending'").run(reason, reference).changes === 1;
   }
 
   /** True when the payment has not been verified with Paystack in the last `intervalMs`. Records the attempt. */
@@ -332,7 +350,7 @@ export class Store {
    * Credits are granted when the currency is NGN, the checkout was for exactly the pack price,
    * and at least that much was charged (fees passed to the customer are fine). Anything else,
    * including a test-mode payment while running on live keys, is held for review, logged,
-   * and can be settled later by the owner. Review is never terminal.
+   * and can be settled later by the owner. Review and abandoned are never terminal.
    */
   settlePayment(reference: string, tx: Pick<VerifiedTransaction, "amount" | "requestedAmount" | "currency" | "domain">, keyMode: KeyMode, force = false): SettleResult {
     return this.db.transaction((): SettleResult => {
@@ -341,7 +359,7 @@ export class Store {
         log("settle_unknown_reference", { reference });
         return "unknown";
       }
-      if (payment.status !== "pending" && payment.status !== "review") return "already";
+      if (payment.status !== "pending" && payment.status !== "review" && payment.status !== "abandoned") return "already";
       const requested = tx.requestedAmount ?? tx.amount;
       const problems: string[] = [];
       if (tx.currency !== "NGN") problems.push(`currency ${tx.currency}`);
@@ -355,7 +373,7 @@ export class Store {
         return "review";
       }
       const updated = this.db
-        .prepare("UPDATE payments SET status = 'paid', paid_at = ?, paid_amount = ?, mode = COALESCE(?, mode), review_reason = NULL WHERE reference = ? AND status IN ('pending', 'review')")
+        .prepare("UPDATE payments SET status = 'paid', paid_at = ?, paid_amount = ?, mode = COALESCE(?, mode), review_reason = NULL WHERE reference = ? AND status IN ('pending', 'review', 'abandoned')")
         .run(this.now(), tx.amount, tx.domain ?? null, reference);
       if (updated.changes !== 1) return "already";
       this.grant(payment.account_id, payment.credits, `purchase:${payment.pack_id}${force ? ":manual" : ""}`, reference);
@@ -385,8 +403,14 @@ export class Store {
   /**
    * A refund (full or partial) processed in Paystack. Credits come off in proportion to the amount
    * refunded so far, rounded down in the buyer's favour; a full refund removes all of them.
+   * Each refund is applied once: Paystack retries webhooks, so a redelivered event is ignored.
+   * A refund without an amount changes nothing and is flagged for the owner (admin review).
    */
-  refundPayment(reference: string, refundKobo: number | undefined): { status: "refunded" | "partial" | "unknown" | "not_paid"; removed: number } {
+  refundPayment(
+    reference: string,
+    refundKobo: number | undefined,
+    refundRef?: string,
+  ): { status: "refunded" | "partial" | "already" | "needs_review" | "unknown" | "not_paid"; removed: number } {
     return this.db.transaction(() => {
       const payment = this.getPayment(reference);
       if (!payment) {
@@ -397,8 +421,19 @@ export class Store {
         log("refund_on_unpaid_payment", { reference, status: payment.status });
         return { status: "not_paid" as const, removed: 0 };
       }
+      if (refundKobo === undefined || !Number.isFinite(refundKobo) || refundKobo <= 0) {
+        const note = `refund${refundRef ? ` ${refundRef}` : ""} arrived without an amount; check it in Paystack, then run reverse if it was a full refund`;
+        this.db.prepare("UPDATE payments SET review_reason = ? WHERE reference = ?").run(note, reference);
+        log("refund_amount_missing", { reference, account: payment.account_id, refund: refundRef ?? null });
+        return { status: "needs_review" as const, removed: 0 };
+      }
+      const key = `${reference}:${refundRef ?? `amt:${refundKobo}`}`;
+      const fresh = this.db
+        .prepare("INSERT OR IGNORE INTO refunds (refund_key, payment_reference, amount_kobo, created_at) VALUES (?, ?, ?, ?)")
+        .run(key, reference, refundKobo, this.now());
+      if (fresh.changes === 0) return { status: "already" as const, removed: 0 };
       const base = payment.paid_amount ?? payment.amount_kobo;
-      const refunded = Math.min(base, (payment.refunded_kobo ?? 0) + (refundKobo ?? base));
+      const refunded = Math.min(base, (payment.refunded_kobo ?? 0) + refundKobo);
       const full = refunded >= base;
       const target = full ? payment.credits : Math.floor((payment.credits * refunded) / base);
       const toRemove = Math.max(0, target - (payment.credits_reversed ?? 0));
@@ -406,7 +441,7 @@ export class Store {
       this.db
         .prepare("UPDATE payments SET refunded_kobo = ?, credits_reversed = credits_reversed + ?, status = CASE WHEN ? THEN 'reversed' ELSE status END WHERE reference = ?")
         .run(refunded, removed, full ? 1 : 0, reference);
-      log("payment_refunded", { reference, account: payment.account_id, refunded_kobo: refunded, of_kobo: base, removed, shortfall: toRemove - removed });
+      log("payment_refunded", { reference, account: payment.account_id, refund: refundRef ?? null, refunded_kobo: refunded, of_kobo: base, removed, shortfall: toRemove - removed });
       return { status: full ? ("refunded" as const) : ("partial" as const), removed };
     })();
   }
@@ -426,8 +461,25 @@ export class Store {
     })();
   }
 
-  /** Dispute resolved: the merchant won (credits come back) or the buyer won (payment reversed). */
-  resolveDispute(reference: string, merchantWon: boolean | undefined): { status: "restored" | "reversed" | "pending_review" | "unknown" | "not_disputed"; credits: number } {
+  /** Gives back the credits a dispute hold took, except those already owed to refunds. Returns how many. */
+  private releaseHold(payment: Payment, reason: string): number {
+    const refundCredits = payment.refunded_kobo ? Math.floor((payment.credits * payment.refunded_kobo) / (payment.paid_amount ?? payment.amount_kobo)) : 0;
+    const restore = Math.max(0, (payment.credits_reversed ?? 0) - refundCredits);
+    if (restore > 0) this.grant(payment.account_id, restore, reason, payment.reference);
+    this.db.prepare("UPDATE payments SET status = 'paid', credits_reversed = credits_reversed - ? WHERE reference = ?").run(restore, payment.reference);
+    return restore;
+  }
+
+  /**
+   * Dispute resolved. The merchant won: held credits come back. The buyer won: the payment is reversed,
+   * unless only part of it was refunded (`refundKobo` below the amount paid), in which case the hold is
+   * released and credits come off in proportion to that refund, as for any partial refund.
+   */
+  resolveDispute(
+    reference: string,
+    merchantWon: boolean | undefined,
+    refundKobo?: number,
+  ): { status: "restored" | "reversed" | "partial" | "pending_review" | "unknown" | "not_disputed"; credits: number } {
     return this.db.transaction(() => {
       const payment = this.getPayment(reference);
       if (!payment) return { status: "unknown" as const, credits: 0 };
@@ -437,14 +489,18 @@ export class Store {
         return { status: "pending_review" as const, credits: 0 };
       }
       if (!merchantWon) {
+        const base = payment.paid_amount ?? payment.amount_kobo;
+        if (refundKobo !== undefined && refundKobo > 0 && (payment.refunded_kobo ?? 0) + refundKobo < base) {
+          const restored = this.releaseHold(payment, "dispute_partial");
+          const { removed } = this.refundPayment(reference, refundKobo, "dispute");
+          log("dispute_partially_lost", { reference, account: payment.account_id, refund_kobo: refundKobo, restored, removed });
+          return { status: "partial" as const, credits: restored - removed };
+        }
         this.db.prepare("UPDATE payments SET status = 'reversed', review_reason = 'chargeback lost' WHERE reference = ?").run(reference);
         log("dispute_lost", { reference, account: payment.account_id });
         return { status: "reversed" as const, credits: 0 };
       }
-      const refundCredits = payment.refunded_kobo ? Math.floor((payment.credits * payment.refunded_kobo) / (payment.paid_amount ?? payment.amount_kobo)) : 0;
-      const restore = Math.max(0, (payment.credits_reversed ?? 0) - refundCredits);
-      if (restore > 0) this.grant(payment.account_id, restore, "dispute_won", reference);
-      this.db.prepare("UPDATE payments SET status = 'paid', credits_reversed = credits_reversed - ? WHERE reference = ?").run(restore, reference);
+      const restore = this.releaseHold(payment, "dispute_won");
       log("dispute_won", { reference, account: payment.account_id, restored: restore });
       return { status: "restored" as const, credits: restore };
     })();

@@ -41,6 +41,8 @@ Browser --> /buy/<checkout> --> Paystack checkout --> /paid (verify) + /paystack
 
 ## Run locally
 
+Needs Node 22.9 or later.
+
 ```bash
 cd connector
 npm ci
@@ -60,11 +62,17 @@ Step-by-step, click by click: **[GO-LIVE.md](GO-LIVE.md)** (Paystack Starter Bus
 Summary:
 
 1. **Paystack Nigeria.** Start as a Starter Business (BVN and ID, no CAC; ₦8M lifetime collections) or a Registered Business. Payouts settle in naira to your Nigerian bank account the next working day. Set the webhook URL to `https://<your-domain>/paystack/webhook`.
-2. **Host.** `render.yaml` deploys the Docker image with a persistent disk at `/data`. Any other Docker host with a volume works too (Fly.io, Railway); set the variables from `.env.example`.
+2. **Host.** `render.yaml` deploys the Docker image with a persistent disk at `/data`. Any other Docker host with a volume mounted at `/data` works too (Fly.io, Railway). Pass production values, not `.env.example` (that file is for local runs):
    ```bash
    docker build -t lagos-brief-connector connector
-   docker run -p 3000:3000 -v brief-data:/data --env-file connector/.env lagos-brief-connector
+   docker run -p 3000:3000 -v brief-data:/data \
+     -e PUBLIC_BASE_URL=https://<your-domain> \
+     -e PAYSTACK_SECRET_KEY=sk_test_... \
+     -e SUPPORT_EMAIL=you@example.com \
+     -e TRUST_PROXY=1 \
+     lagos-brief-connector
    ```
+   The image already sets `NODE_ENV=production` and `DATABASE_PATH=/data/connector.db`. Set `TRUST_PROXY` to the number of proxies in front of the app, then run the proxy check in [GO-LIVE.md](GO-LIVE.md) (Step 3).
 3. **Domain and HTTPS.** Point a domain at the host; the platform terminates TLS.
 4. **Test a live payment** with Paystack test keys first, then switch to live keys.
 5. **Publish the URL.** Share `https://<your-domain>` (the landing page) in the README, `SHARE.md`, and posts.

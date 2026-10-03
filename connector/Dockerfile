@@ -19,6 +19,7 @@ COPY package.json ./
 # Starts as root only to take ownership of the mounted disk, then the server
 # drops to the unprivileged node user (uid 1000) before opening the database.
 ENV RUN_AS_UID=1000 RUN_AS_GID=1000 DATABASE_PATH=/data/connector.db PORT=3000
-RUN mkdir -p /data
+# /root/.ssh lets Render's Shell tab (SSH) open a session for the owner tools in GO-LIVE.md.
+RUN mkdir -p /data /root/.ssh && chmod 700 /root/.ssh
 EXPOSE 3000
 CMD ["node", "dist/src/server.js"]
