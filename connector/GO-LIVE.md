@@ -11,7 +11,9 @@ User pays ₦ on Paystack (card, bank transfer, USSD)
   -> spend or withdraw with that account's debit card
 ```
 
-Paystack pays out to a **bank account**, not to a card. Use the account your debit card belongs to, and the money is on your card the day it settles. For same-day access, turn on Paystack's Payouts on Demand.
+Paystack pays out to a **bank account**, not to a card. Use the account your debit card belongs to, and the money is on your card the day it settles.
+
+Faster access later: once your business has had at least one payout a week for four weeks in a row, Paystack's **Payouts on Demand** lets you request part of your pending balance early (at the time of writing: up to 70%, for a 1% fee per withdrawal). Check the current terms in your dashboard.
 
 ## What you need
 
@@ -26,19 +28,22 @@ Paystack pays out to a **bank account**, not to a card. Use the account your deb
 2. Pick **Starter Business** to begin without CAC registration. Submit your BVN and ID.
    - Starter Businesses can collect up to **₦8,000,000 in total**. Upgrade to a Registered Business (CAC) from the Compliance page before you get close.
 3. Add your **payout account**: your personal bank account. For a Starter Business, the account name must match your BVN and ID.
-4. Leave the payout schedule on the default (next working day), or enable **Payouts on Demand** for instant payouts.
-5. Open **Settings > API Keys & Webhooks** and copy your **test secret key** (`sk_test_...`). The live key (`sk_live_...`) appears once Paystack activates the account.
+4. Leave the payout schedule on the default (next working day).
+5. **Leave "Pass fees to customers" (Settings > Preferences) off.** The fee table below assumes you absorb the fee. If you turn it on anyway, buyers are still credited correctly, but they pay more than the pack price.
+6. Open **Settings > API Keys & Webhooks** and copy your **test secret key** (`sk_test_...`). The live key (`sk_live_...`) appears once Paystack activates the account.
 
 ## Step 2: Deploy the connector (10 minutes)
 
 1. Click **Deploy to Render** in the repo README (or go to `https://render.com/deploy?repo=https://github.com/tobilobaadeyemo/claude-real-estate-exec-brief`).
-2. Connect GitHub and approve the blueprint (`render.yaml`). It creates the web service, the disk, and the settings.
+2. Connect GitHub and approve the blueprint (`render.yaml`). It creates the web service, the disk, and the settings. Render deploys only after the repo's checks pass.
 3. When asked for values:
    - `PAYSTACK_SECRET_KEY`: your `sk_test_...` key for now
-   - `PUBLIC_BASE_URL`: leave empty to use the `onrender.com` address, or enter your custom domain later
-   - `SUPPORT_EMAIL`: the address shown on the privacy page
+   - `PUBLIC_BASE_URL`: leave empty to use the `onrender.com` address. For your own domain later, enter the full address, for example `https://brief.yourdomain.com`
+   - `SUPPORT_EMAIL`: where buyers write if a payment needs a manual check. It is shown on the payment pages
 4. When the deploy finishes, open `https://<your-service>.onrender.com/healthz`. You should see `{"ok":true}`.
 5. Back in Paystack, set the **Test Webhook URL** to `https://<your-service>.onrender.com/paystack/webhook`.
+
+**While you are on test keys, keep the service address to yourself.** Anyone could buy credits with Paystack's public test cards. Those credits are cancelled automatically when you switch to a live key (Step 4), but it is simpler not to share the link until then.
 
 ## Step 3: Test the full money path (15 minutes)
 
@@ -46,25 +51,26 @@ Paystack pays out to a **bank account**, not to a card. Use the account your deb
 2. In Claude: **Settings > Connectors > Add custom connector**, name it "Lagos Brief", and paste the URL.
 3. In a chat, ask: "Build a marketing strategy for this listing" with listing details and comps. You get the free preview.
 4. Ask again. You get a buy link. Open it, choose a pack, and pay with one of Paystack's test cards (Paystack docs, "Test Payments").
-5. The return page shows your new balance. Ask Claude again: you get the full strategy.
+5. The return page confirms the credits added. Ask Claude again: you get the full strategy.
 6. In the Paystack dashboard (test mode), the transaction shows in **NGN**.
+7. In Render, open **Logs** and find the line with `"event":"proxy_check"`. `client_ip` should be your own internet address (search "what is my IP" to compare). If it shows a `10.x.x.x` address instead, raise `TRUST_PROXY` by 1 in Render's **Environment**; if it shows an address you did not send, lower it by 1.
 
 ## Step 4: Switch to live money
 
 1. Once Paystack activates the account, copy the **live secret key**.
-2. In Render: your service > **Environment** > set `PAYSTACK_SECRET_KEY` to `sk_live_...` and save. Render redeploys automatically.
+2. In Render: your service > **Environment** > set `PAYSTACK_SECRET_KEY` to `sk_live_...` and save. Render redeploys automatically. On the first start with a live key, credits bought with test payments are cancelled (the log shows `test_credits_voided`).
 3. In Paystack, set the **Live Webhook URL** to the same `/paystack/webhook` address.
 4. Buy the smallest pack with your own card. The next working day, check the payout in your bank account.
 
 ## Step 5 (optional): your own domain
 
 1. Render: **Settings > Custom Domains**, add `brief.yourdomain.com`, and follow the DNS instructions.
-2. Set `PUBLIC_BASE_URL=https://brief.yourdomain.com` in Render.
+2. Set `PUBLIC_BASE_URL=https://brief.yourdomain.com` in Render (with `https://`).
 3. Update both Paystack webhook URLs to the new domain.
 
 ## What you receive per pack
 
-Paystack local fee: 1.5% + ₦100, capped at ₦2,000. Foreign cards cost 3.9%.
+Paystack local fee: 1.5% + ₦100, capped at ₦2,000. Foreign cards cost more and are not capped (at the time of writing: 3.9% + ₦100 for Visa, Mastercard, and Verve; 4.5% for American Express). Check Paystack's pricing page for current rates.
 
 | Pack | Buyer pays | Paystack fee (local card) | You receive |
 |---|---:|---:|---:|
@@ -74,11 +80,29 @@ Paystack local fee: 1.5% + ₦100, capped at ₦2,000. Foreign cards cost 3.9%.
 
 Your other running costs are Render hosting. The connector makes no AI calls, so serving a brief costs you nothing extra.
 
+## When a payment needs attention
+
+Payments that do not match a pack (wrong amount or currency, or a test payment on live keys) are **held for review**, never silently dropped. The buyer sees a "needs a manual check" page with your support email. Refunds and chargebacks you make in Paystack remove the matching credits automatically.
+
+Owner tools run from Render's **Shell** tab (your service > Shell):
+
+```bash
+node dist/src/admin.js review                         # held and stuck payments
+node dist/src/admin.js reconcile                      # re-check pending payments with Paystack
+node dist/src/admin.js settle <reference> --force     # credit a held payment after you have checked it
+node dist/src/admin.js grant <email> <credits> <reason>
+node dist/src/admin.js reverse <reference> <reason>   # remove a refunded payment's credits
+node dist/src/admin.js rotate <email>                 # new connector URL for a user who lost theirs
+node dist/src/admin.js status <email>
+```
+
+Every held, credited, reversed, or voided payment is also written to the Render log as a JSON line.
+
 ## Why it can only charge in naira
 
 - Every Paystack checkout the server creates is sent with `currency: "NGN"` and the amount in kobo (`src/paystack.ts`). Currency is fixed in code; no setting can change it.
-- Credits are granted only when Paystack confirms the payment **in NGN** and for **exactly** the pack amount; anything else is rejected and logged (`src/store.ts`).
-- Tests check both rules (`test/server.test.ts`: "Paystack requests are always naira", "non-naira settlements are rejected").
+- Credits are granted only when Paystack confirms the payment **in NGN**, for **exactly** the pack price, with at least that amount charged. Anything else is held for review and logged (`src/store.ts`).
+- Tests check these rules (`test/server.test.ts`, `test/hardening.test.ts`).
 - Pack prices are set in kobo (`CREDIT_PACKS`, naira x 100). The defaults are ₦15,000, ₦45,000, and ₦160,000.
 
 ## Before you scale

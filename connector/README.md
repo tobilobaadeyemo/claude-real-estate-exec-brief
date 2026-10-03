@@ -10,15 +10,16 @@ A remote MCP server that users add to Claude as a custom connector. It computes 
 
 | Tool | Cost | Returns |
 |---|---:|---|
-| `marketing_strategy` | 3 credits | Full strategy + `plan_id`. First call on a new account: free preview |
+| `marketing_strategy` | 3 credits | Full strategy + `plan_id`. Re-running the same listing inputs within 30 days is free. With too few credits, a new account's first call returns the free preview |
 | `audience_version` | free | Leadership, client, or team version of a paid plan |
 | `market_brief` | 2 credits | Hold / sell / lease / reprice decision. First call on a new account: free preview |
 | `campaign_update` | 1 credit | Progress vs plan, gate checks, status |
 | `account_status`, `buy_credits`, `delete_my_data` | free | Balance, checkout link, data deletion |
+| `rotate_connector_url` | free | New connector URL; the old one stops working (for a leaked URL) |
 
 Default packs (edit with `CREDIT_PACKS`): One strategy, 3 credits for ₦15,000 · Starter, 10 credits for ₦45,000 · Agency, 40 credits for ₦160,000.
 
-When the balance is too low, the tool returns a one-time checkout link. The user pays on Paystack (card, bank transfer, USSD), credits land through the webhook or the return page, and they ask Claude to run the tool again.
+When the balance is too low, the tool returns the account's checkout link (one live link per account). The user pays on Paystack (card, bank transfer, USSD), credits land through the webhook or the return page, and they ask Claude to run the tool again.
 
 ## Architecture
 
@@ -35,15 +36,16 @@ Browser --> /buy/<checkout> --> Paystack checkout --> /paid (verify) + /paystack
 - `src/mcp.ts`: tool definitions and metering
 - `src/store.ts`: SQLite storage with atomic charges and idempotent payment settlement
 - `src/paystack.ts`: initialize, verify, webhook signature check
-- `src/server.ts`: HTTP routes, rate limits, security headers
+- `src/server.ts`: HTTP routes, rate limits, security headers, privilege drop
+- `src/admin.ts`: owner command line for held payments, reconciliation, grants, reversals, URL rotation (see [GO-LIVE.md](GO-LIVE.md))
 
 ## Run locally
 
 ```bash
 cd connector
 npm ci
-npm test            # engine, metering, payments, and an end-to-end MCP client run
-cp .env.example .env  # then edit
+npm test              # engine, metering, payments, audit regressions, and end-to-end MCP runs
+cp .env.example .env  # then edit; npm run dev loads it
 npm run dev
 ```
 
@@ -71,11 +73,15 @@ Summary:
 
 - Connector tokens are 256-bit random values; only SHA-256 hashes are stored. The URL is shown once.
 - Hosting platforms may log request paths, which contain the token. Restrict log access, or have header-capable clients use `/mcp` with `Authorization: Bearer`.
-- Webhooks are accepted only with a valid `x-paystack-signature` (HMAC-SHA512), then re-verified with the Paystack API. Credits are granted once per reference, only when amount and currency match the pack.
-- Charges are atomic and happen only after a result is computed; balances cannot go negative.
-- Free previews cost nothing to serve (no LLM call), so throwaway accounts do not cost money.
-- Charges are in naira only: `currency: "NGN"` is fixed in code, and settlements in any other currency or amount are rejected.
-- The container starts as root only to take ownership of the mounted disk, then drops to uid 1000 before opening the database. In production, the server refuses to start without a valid Paystack secret key.
+- Webhooks are accepted only with a valid `x-paystack-signature` (HMAC-SHA512), then re-verified with the Paystack API. Credits are granted once per reference, only for NGN, for exactly the pack price (fees passed to the buyer are fine), and only in the key's mode. Anything else is held for review and logged, never silently dropped. Refunds and chargebacks reverse the credits.
+- Credits from test-mode payments are voided on the first start with a live key.
+- SQLite runs in WAL mode with `synchronous=FULL`, so a settlement acknowledged to Paystack survives a host crash.
+- Charges are atomic and happen only after a result is computed and checked for finite numbers; balances cannot go negative.
+- Free previews cost nothing to serve (no LLM call) and are limited to one per email address.
+- One live checkout link per account (expired links are purged hourly), JSON-RPC batches are refused, and rate limiters sweep on a timer with a hard key cap, so a free account cannot fill the disk or slow the server.
+- `/paid` shows only the credits a payment added, and calls Paystack at most once per 30 seconds per payment.
+- User text is escaped in every table, so comp descriptions or channel names cannot rewrite computed figures.
+- The container starts as root only to take ownership of the data directory and database files (never following symlinks), then drops to uid 1000 with no supplementary groups. In production the server refuses to start without a valid Paystack key and an https base URL.
 - The rate limiter and SQLite assume a single instance. Move to Postgres and a shared limiter before scaling out.
 
 ## Roadmap

@@ -48,4 +48,6 @@ jobs:
           for i in $(seq 1 30); do curl -fsS localhost:3000/healthz && break; sleep 1; done
           curl -fsS localhost:3000/healthz
           test "$(docker exec brief stat -c %u /data/connector.db)" = "1000"
-          docker logs brief
+      - name: Container logs
+        if: always()
+        run: docker logs brief || true

@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.3.0 (2026-10-03)
+
+Pre-launch audit of the paid connector: 5 review dimensions, every finding adversarially verified (68 confirmed, 2 refuted). All confirmed findings fixed, with regression tests in `connector/test/hardening.test.ts`.
+
+### Payments
+- Credits granted on the requested amount, so "pass fees to customers" no longer strands buyers; mismatches are held for review (never terminal) and logged
+- Test-mode payments refused on live keys; test credits voided on the first live start
+- Refund and chargeback webhooks reverse credits
+- `/paid` shows only this payment's credits, verifies at most every 30 s, and names the support email
+- `synchronous=FULL` for crash-safe settlements; unsigned non-JSON webhooks get 401
+- Admin CLI (`src/admin.ts`): review, reconcile, settle, grant, reverse, rotate, status
+
+### Abuse and metering
+- One live checkout link per account, hourly purge; JSON-RPC batches refused
+- Rate limiter sweeps on a timer with a hard cap; unknown tokens refused before any per-token state; purchases limited per account; configurable proxy hops
+- Re-running the same listing is free for 30 days; other audiences stay free
+- Strict calendar dates and finite numbers; campaign updates refused before launch without charge
+- Preview shows only data-gap flags; one preview per email; accurate billing messages; `rotate_connector_url` tool
+
+### Engine
+- List price kept inside the heat window; step kept within 3 to 5%; owner floor above market lists at the floor with no inverted band; keeping the ask keeps the ask; band edges drop just below (₦1.01B to ₦995M)
+- Leadership-only figures (fee ratio, guardrail) never reach client, team, or preview; team never sees the floor
+- Inclusive band edges; non-negative channel lines; incomplete budgets not totalled; contingency never ₦0
+- Market brief: reprice needs the days-on-market test, no unsupported "Hold", liquidity sale needs a hot or warm market, triggers fit the action
+- Campaign update: gates use their stated thresholds, offers scored from the price gate, past-close status, as-of date, objections
+- Honest reads for missing data, lease wording, January diaspora window, table-cell escaping, money formatting at unit boundaries
+
+### Operations
+- Render deploys only after checks pass and ignores doc-only edits; keep-alive timeouts; listen failures exit non-zero; shutdown deadline; CI prints container logs on failure; `npm run dev` loads `.env`
+- GO-LIVE: pass-fees guidance, private URL while on test keys, proxy check, accurate Payouts on Demand and foreign card fees, admin commands
+
 ## 1.2.0 (2026-10-03)
 
 ### Added

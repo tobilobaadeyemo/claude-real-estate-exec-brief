@@ -2,7 +2,7 @@ import { longDate, ngn, pct, usd } from "./format.js";
 import type { CompSet, Heat } from "./market.js";
 import type { MarketBrief } from "./marketBrief.js";
 import type { CampaignUpdate } from "./campaign.js";
-import { SEGMENT_NAMES, type Audience, type StrategyPlan } from "./strategy.js";
+import { SEGMENT_NAMES, flagsFor, type Audience, type StrategyPlan, type View } from "./strategy.js";
 
 export interface RenderContext {
   asOf: Date;
@@ -17,9 +17,19 @@ const COMPLIANCE =
 const DISCLAIMER =
   "Not legal, tax, or formal valuation advice. Title and legal matters require solicitor review; formal valuations require a registered estate surveyor and valuer.";
 
+/** Collapse newlines in user-supplied text so it cannot start new Markdown blocks. */
+export function clean(value: string): string {
+  return value.replace(/[\r\n\u2028\u2029]+/g, " ").trim();
+}
+
+/** Escape a table cell so user text cannot add columns or rows. */
+function cell(value: string | number): string {
+  return clean(String(value)).replace(/\\/g, "\\\\").replace(/\|/g, "\\|");
+}
+
 function table(headers: string[], rows: (string | number)[][], align?: ("l" | "r")[]): string {
   const sep = headers.map((_, i) => (align?.[i] === "r" ? "---:" : "---"));
-  return [headers, sep, ...rows.map((r) => r.map(String))].map((r) => `| ${r.join(" | ")} |`).join("\n");
+  return [headers.map(cell), sep, ...rows.map((r) => r.map(cell))].map((r) => `| ${r.join(" | ")} |`).join("\n");
 }
 
 function heatText(heat: Heat): string {
@@ -48,6 +58,8 @@ function bandImplication(band: string): string {
 function words(plan: StrategyPlan) {
   const sale = plan.input.transaction === "sale";
   return {
+    money: (v: number) => (sale ? ngn(v) : `${ngn(v)}/yr`),
+    homes: sale ? "homes" : "lettings",
     price: sale ? "Price" : "Annual rent",
     ask: sale ? "ask" : "asking rent",
     buyer: sale ? "Buyer" : "Tenant",
@@ -62,17 +74,22 @@ function marketPositionTable(plan: StrategyPlan, audience: Audience): string {
   const w = words(plan);
   const { compSet: set, heat, input } = plan;
   const rows: string[][] = [
-    [w.price, `${ngn(input.listing.asking_price_ngn)} ${w.ask}`, `${ngn(set.median)} adj. median (${rangeText(set)})`, `${plan.band} (${pct(plan.premium)})`],
+    [w.price, `${w.money(input.listing.asking_price_ngn)} ${w.ask}`, `${w.money(set.median)} adj. median (${rangeText(set)})`, `${plan.band} (${pct(plan.premium)})`],
   ];
   if (plan.perSqm) {
-    rows.push([`${w.price} / sqm of ${plan.perSqm.basis === "plot" ? "plot" : "built area"}`, ngn(plan.perSqm.subject, 2), ngn(plan.perSqm.market, 2), plan.perSqm.subject > set.max / (input.listing.plot_sqm ?? input.listing.built_sqm ?? 1) ? "Above every adjusted comp" : "Within the comp range"]);
+    const ps = plan.perSqm;
+    const read = ps.subject > ps.marketMax ? "Above every adjusted comp" : ps.subject < ps.marketMin ? "Below every adjusted comp" : "Within the comp range";
+    rows.push([`${w.price} / sqm of ${ps.basis === "plot" ? "plot" : "built area"}`, ngn(ps.subject, 2), ngn(ps.market, 2), read]);
   }
   if (heat.realPriceChange !== undefined && input.heat?.nominal_price_change_pct !== undefined) {
     rows.push(["Price trend, 12m", "n/a", `${pct(input.heat.nominal_price_change_pct / 100)} nominal / ${pct(heat.realPriceChange)} real`, heat.realPriceChange < -0.03 ? "Falling in real terms" : heat.realPriceChange > 0.03 ? "Rising in real terms" : "Flat in real terms"]);
   }
   if (input.heat?.dom_now !== undefined) {
     const prior = input.heat.dom_year_ago ? ` (${input.heat.dom_year_ago} a year ago)` : "";
-    rows.push(["Days on market", "n/a", `${input.heat.dom_now} median${prior}`, input.heat.dom_year_ago && input.heat.dom_now > input.heat.dom_year_ago ? "Slower than last year" : "Steady or faster"]);
+    const domRead = !input.heat.dom_year_ago
+      ? "No prior-year figure `[DATA NEEDED]`"
+      : input.heat.dom_now > input.heat.dom_year_ago ? "Slower than last year" : "Steady or faster";
+    rows.push(["Days on market", "n/a", `${input.heat.dom_now} median${prior}`, domRead]);
   }
   rows.push(["Market heat", "n/a", heatText(heat), heat.signals.filter((s) => s.score !== 0).map((s) => `${s.name.split(",")[0]} ${s.score > 0 ? "+" : "-"}`).join("; ") || "No strong signals"]);
   if (input.fx_ngn_per_usd && audience !== "team") {
@@ -85,10 +102,10 @@ function marketPositionTable(plan: StrategyPlan, audience: Audience): string {
 function header(plan: StrategyPlan, audience: Audience | "preview", ctx: RenderContext): string {
   const l = plan.input.listing;
   const version = audience === "preview" ? "Free preview" : audience[0].toUpperCase() + audience.slice(1);
-  const prepared = plan.input.presenter ? `Prepared by: ${plan.input.presenter} | ` : "";
+  const prepared = plan.input.presenter ? `Prepared by: ${clean(plan.input.presenter)} | ` : "";
   const title = audience === "preview" ? "Marketing Strategy Preview" : "Marketing Strategy";
   return [
-    `# ${title}: ${l.id}, ${l.district}`,
+    `# ${title}: ${clean(l.id)}, ${clean(l.district)}`,
     `${prepared}Version: ${version} | Date: ${longDate(ctx.asOf)}${ctx.planId ? ` | Plan ID: \`${ctx.planId}\`` : ""}`,
     `Confidence: ${plan.confidence.level} (${plan.confidence.reason})`,
   ].join("\n");
@@ -100,13 +117,13 @@ export function renderStrategyPreview(plan: StrategyPlan, ctx: RenderContext): s
     header(plan, "preview", ctx),
     "## Diagnosis",
     [
-      `- **Price position:** ${ngn(l.asking_price_ngn)} is ${pct(plan.premium)} vs the adjusted market median of ${ngn(plan.compSet.median)}: **${plan.band}**. ${bandImplication(plan.band)}`,
+      `- **Price position:** ${words(plan).money(l.asking_price_ngn)} is ${pct(plan.premium)} vs the adjusted market median of ${words(plan).money(plan.compSet.median)}: **${plan.band}**. ${bandImplication(plan.band)}`,
       `- **Market heat:** ${heatText(plan.heat)}.`,
       `- **Evidence:** ${plan.compSet.closedCount} closed and ${plan.compSet.askingCount} asking comps.`,
     ].join("\n"),
     "## Market Position",
     marketPositionTable(plan, "leadership"),
-    ...warningsBlock(plan.warnings),
+    ...warningsBlock(flagsFor(plan.flags, "preview")),
     "## Locked in the full strategy",
     "- Recommended list price, floor, negotiation band, and a pre-agreed price step with its dated trigger",
     "- Expected outcome at the owner's price vs the recommended price",
@@ -138,20 +155,30 @@ export function renderStrategy(plan: StrategyPlan, audience: Audience, ctx: Rend
   const buyer = segments.primary
     ? `${SEGMENT_NAMES[segments.primary]} first${segments.secondary ? `, ${SEGMENT_NAMES[segments.secondary].toLowerCase()} second` : ""}.`
     : "`[DATA NEEDED: CRM inquiry mix]`";
-  const budgetLine = budget.total !== undefined ? ` on a ${ngn(budget.total)} budget${showEconomics && budget.feeRatio ? ` (${(budget.feeRatio * 100).toFixed(1)}% of expected fee)` : ""}` : "";
-  const priceLine = pricing.keepAsk
-    ? `Keep ${ngn(pricing.list)}: the ${w.ask} is at market (${pct(plan.premium)} vs adjusted median ${ngn(plan.compSet.median)}).`
-    : `List at ${ngn(pricing.list)}, not ${ngn(l.asking_price_ngn)}. The ${w.ask} is ${pct(plan.premium)} vs the adjusted market median of ${ngn(plan.compSet.median)}.`;
+  const budgetLine = budget.total !== undefined
+    ? ` on a ${ngn(budget.total)} budget${showEconomics && budget.feeRatio ? ` (${(budget.feeRatio * 100).toFixed(1)}% of expected fee)` : ""}`
+    : budget.partialTotal !== undefined ? ` on a budget of at least ${ngn(budget.partialTotal)} (incomplete)` : "";
+  const priceLine = pricing.listAtFloor
+    ? `List at the owner's floor, ${w.money(pricing.list)}. The market-based price is lower: the ${w.ask} is ${pct(plan.premium)} vs the adjusted market median of ${w.money(plan.compSet.median)}.`
+    : pricing.keepAsk
+      ? `Keep ${w.money(l.asking_price_ngn)}: the ${w.ask} is at market (${pct(plan.premium)} vs adjusted median ${w.money(plan.compSet.median)}).${pricing.bandSuggestion ? ` Consider ${w.money(pricing.bandSuggestion)} to sit under the round search band buyers filter by.` : ""}`
+      : `List at ${w.money(pricing.list)}, not ${w.money(l.asking_price_ngn)}. The ${w.ask} is ${pct(plan.premium)} vs the adjusted market median of ${w.money(plan.compSet.median)}.`;
+  const hideStep = audience === "team" && pricing.stepHitFloor;
+  const stepLine = !pricing.stepAvailable
+    ? `. No price step is available${audience === "team" ? "" : " below the owner's floor"}.`
+    : hideStep
+      ? `, with a pre-agreed price step on ${longDate(timeline.gates[1].date)} if the price gate fires (the Head of Sales confirms the new price).`
+      : `, with a pre-agreed step to ${w.money(pricing.step)} on ${longDate(timeline.gates[1].date)} if the price gate fires.`;
   out.push(
     "## Bottom Line",
     [
       `- **${w.price}:** ${priceLine}`,
       `- **${w.buyer}:** ${buyer}`,
-      `- **Plan:** ${w.closeVerb} by ${longDate(timeline.closeDate)}${budgetLine}, with a pre-agreed step to ${ngn(pricing.step)} on ${longDate(timeline.gates[1].date)} if the price gate fires.`,
+      `- **Plan:** ${w.closeVerb} by ${longDate(timeline.closeDate)}${budgetLine}${stepLine}`,
     ].join("\n"),
   );
 
-  out.push("## Market Position", audience === "team" ? `${w.price} sits ${pct(plan.premium)} vs the adjusted market median of ${ngn(plan.compSet.median)} (${plan.band}). Market heat: ${heatText(plan.heat)}.` : marketPositionTable(plan, audience));
+  out.push("## Market Position", audience === "team" ? `${w.price} sits ${pct(plan.premium)} vs the adjusted market median of ${w.money(plan.compSet.median)} (${plan.band}). Market heat: ${heatText(plan.heat)}.` : marketPositionTable(plan, audience));
 
   if (outcomes.atAsk && outcomes.atList && input.track_record && audience !== "team") {
     const tr = input.track_record;
@@ -165,17 +192,24 @@ export function renderStrategy(plan: StrategyPlan, audience: Audience, ctx: Rend
         ],
         ["l", "r", "r"],
       ),
-      `At ${ngn(l.asking_price_ngn)}, history points to about ${ngn(outcomes.atAsk.close)}${outcomes.atAsk.dom ? ` after about ${outcomes.atAsk.dom} days` : ""}. At ${ngn(pricing.list)}, about ${ngn(outcomes.atList.close)}${outcomes.atList.dom ? ` after about ${outcomes.atList.dom} days` : ""}.`,
+      `At ${w.money(l.asking_price_ngn)}, history points to about ${w.money(outcomes.atAsk.close)}${outcomes.atAsk.dom ? ` after about ${outcomes.atAsk.dom} days` : ""}. At ${w.money(pricing.list)}, about ${w.money(outcomes.atList.close)}${outcomes.atList.dom ? ` after about ${outcomes.atList.dom} days` : ""}.`,
     );
   }
 
   // Pricing plan.
-  const pricingRows: string[][] = [[`List ${w.price.toLowerCase()}`, ngn(pricing.list), pricing.keepAsk ? "Owner ask, at market" : `${pct(pricing.listPremium)} vs adj. median; search-band checked`]];
+  const listBasis = pricing.listAtFloor
+    ? (audience === "team" ? "Pre-approved list price" : "Owner's floor; above the market-based price")
+    : pricing.keepAsk
+      ? `Owner ask, at market${pricing.bandSuggestion ? `; ${w.money(pricing.bandSuggestion)} would sit under the search band` : ""}`
+      : `${pct(pricing.listPremium)} vs adj. median; search-band checked`;
+  const pricingRows: string[][] = [[`List ${w.price.toLowerCase()}`, w.money(pricing.list), listBasis]];
   if (showFloor) {
-    pricingRows.push(["Floor", ngn(pricing.floor), pricing.floorBasis === "owner" ? `Owner's stated minimum${pricing.floorAboveMarket ? "; above every comp" : ""}` : "Adjusted comp low (no owner floor given)"]);
-    pricingRows.push(["Negotiation band", `${ngn(pricing.floor)} to ${ngn(pricing.list)}`, "Authorized negotiators only"]);
+    pricingRows.push(["Floor", w.money(pricing.floor), pricing.floorBasis === "owner" ? `Owner's stated minimum${pricing.floorAboveMarket ? "; above every comp" : ""}` : "Adjusted comp low (no owner floor given)"]);
+    pricingRows.push(["Negotiation band", pricing.floor < pricing.list ? `${w.money(pricing.floor)} to ${w.money(pricing.list)}` : "None: list is at the floor", "Authorized negotiators only"]);
   }
-  pricingRows.push(["Price step", `${ngn(pricing.step)} on ${longDate(timeline.gates[1].date)}`, `Trigger: ${timeline.gates[1].threshold}`]);
+  pricingRows.push(pricing.stepAvailable
+    ? ["Price step", `${hideStep ? "Pre-approved" : w.money(pricing.step)} on ${longDate(timeline.gates[1].date)}`, `Trigger: ${timeline.gates[1].threshold}${hideStep ? "; the Head of Sales confirms the new price" : ""}`]
+    : ["Price step", "None", audience === "team" ? "Escalate to the Head of Sales at the price gate" : "List is at the owner's floor"]);
   out.push("## Pricing Plan", table(["Item", "Value", "Basis"], pricingRows, ["l", "r", "l"]));
   if (audience === "team") out.push("Negotiation goes to authorized negotiators only. Quote the list price.");
 
@@ -186,9 +220,9 @@ export function renderStrategy(plan: StrategyPlan, audience: Audience, ctx: Rend
   if (segments.secondary) segLines.push(`**Secondary:** ${SEGMENT_NAMES[segments.secondary]}. ${mix[segments.secondary]}% of qualified inquiries [Internal CRM].`);
   if (!segments.primary) segLines.push("`[DATA NEEDED: CRM inquiry mix by segment for this price band]`");
   if (timeline.decemberWindow) segLines.push(`December window: in-person viewings for visiting diaspora ${w.buyers} ${longDate(timeline.decemberWindow.from)} to ${longDate(timeline.decemberWindow.to)}; diaspora ads run from launch.`);
-  const amenities = l.amenities?.length ? l.amenities.join(", ") : "`[DATA NEEDED: key amenities]`";
+  const amenities = l.amenities?.length ? l.amenities.map(clean).join(", ") : "`[DATA NEEDED: key amenities]`";
   segLines.push(
-    `**Positioning:** ${l.condition ? `${l.condition} ` : ""}${l.bedrooms ? `${l.bedrooms}-bed ` : ""}${l.type.replace(/_/g, " ")} in ${l.district}, priced at the market, with ${l.title.replace(/_/g, " ")}. Draft the one-liner from this.`,
+    `**Positioning:** ${l.condition ? `${clean(l.condition)} ` : ""}${l.bedrooms ? `${l.bedrooms}-bed ` : ""}${clean(l.type).replace(/_/g, " ")} in ${clean(l.district)}, priced at the market, with ${clean(l.title).replace(/_/g, " ")}. Draft the one-liner from this.`,
     `**Proof points to evidence:** ${amenities}; title type stated exactly; peak-hour drive times \`[DATA NEEDED: measure weekday 08:00 drive times]\`.`,
     "**Trust stack:** title stated exactly, solicitor search report on verified request, funds held by solicitor until completion, live video viewings for diaspora.",
   );
@@ -219,7 +253,9 @@ export function renderStrategy(plan: StrategyPlan, audience: Audience, ctx: Rend
   budgetRows.push(["Production: photos, video, floor plan, 3D tour", budget.production !== undefined ? ngn(budget.production) : "`[DATA NEEDED: production quote]`"]);
   budgetRows.push(["Events: open house, live virtual viewings", budget.events !== undefined ? ngn(budget.events) : "`[DATA NEEDED: events cost]`"]);
   budgetRows.push(["Contingency (about 10%)", budget.contingency !== undefined ? ngn(budget.contingency) : "n/a"]);
-  budgetRows.push(["**Total**", budget.total !== undefined ? `**${ngn(budget.total)}**` : "`[DATA NEEDED]`"]);
+  budgetRows.push(budget.total !== undefined
+    ? ["**Total**", `**${ngn(budget.total)}**`]
+    : ["**Total (incomplete)**", budget.partialTotal !== undefined ? `**at least ${ngn(budget.partialTotal)}** \`[DATA NEEDED: ${budget.missing.join(", ")}]\`` : "`[DATA NEEDED]`"]);
   const budgetNotes: string[] = [];
   if (showEconomics && budget.fee !== undefined) {
     budgetNotes.push(`Expected fee: ${input.commission_rate_pct}% x ${ngn(outcomes.expectedClose)} expected close (${outcomes.expectedCloseBasis}) = ${ngn(budget.fee)}.${budget.feeRatio !== undefined ? ` Budget = ${(budget.feeRatio * 100).toFixed(1)}% of fee (guardrail 25%).` : ""}`);
@@ -259,7 +295,7 @@ export function renderStrategy(plan: StrategyPlan, audience: Audience, ctx: Rend
   // Gates.
   const gateRows = [
     [`Before ${longDate(timeline.launch)}`, "Launch readiness", "Assets, trust pack, canonical listing, agent briefing, owner sign-off on price, step, and fallback", "If ARCON approval is pending, launch portals, agents, and organic first"],
-    ...timeline.gates.map((g) => [longDate(g.date), g.name, g.threshold, g.action]),
+    ...timeline.gates.map((g) => [longDate(g.date), g.name, g.threshold, audience === "team" ? g.teamAction : g.action]),
     [longDate(timeline.closeDate), `${w.close} target`, "", ""],
   ];
   out.push("## Timeline and Review Gates", table(["Date", "Gate", "Threshold", "Action"], gateRows));
@@ -270,7 +306,7 @@ export function renderStrategy(plan: StrategyPlan, audience: Audience, ctx: Rend
   // Decisions.
   out.push("## Decisions Needed", decisions(plan, audience));
   out.push("## Compliance", COMPLIANCE);
-  out.push(...warningsBlock(plan.warnings));
+  out.push(...warningsBlock(flagsFor(plan.flags, audience as View)));
   out.push("## Sources and Assumptions", sources(plan, audience));
   out.push("---", "## Appendix: Comparables", compsTable(plan.compSet, audience));
   if (plan.heat.signals.length) {
@@ -302,7 +338,9 @@ function decisions(plan: StrategyPlan, audience: Audience): string {
   const g = plan.timeline.gates[1];
   if (audience === "client") {
     return [
-      `1. Sign-off on list ${ngn(p.list)}, floor ${ngn(p.floor)}, and the ${longDate(g.date)} price-step rule.`,
+      p.stepAvailable
+        ? `1. Sign-off on list ${words(plan).money(p.list)}, floor ${words(plan).money(p.floor)}, and the ${longDate(g.date)} price-step rule.`
+        : `1. Sign-off on list ${words(plan).money(p.list)} at your floor, or a lower floor that leaves room to negotiate.`,
       "2. Copies for our solicitor: title document, survey plan, renovation receipts.",
       "3. Drainage and flood history for the property and street.",
       "4. Viewing access: preferred days and notice period.",
@@ -315,7 +353,9 @@ function decisions(plan: StrategyPlan, audience: Audience): string {
       "3. Weekly dashboard every Monday: Performance marketer.",
     ].join("\n");
   }
-  const lines = [`1. Approve list ${ngn(p.list)}, step to ${ngn(p.step)} on the ${longDate(g.date)} trigger, floor ${ngn(p.floor)}.`];
+  const lines = [p.stepAvailable
+    ? `1. Approve list ${words(plan).money(p.list)}, step to ${words(plan).money(p.step)} on the ${longDate(g.date)} trigger, floor ${words(plan).money(p.floor)}.`
+    : `1. Approve list ${words(plan).money(p.list)} at the owner's floor (no step available), or ask the owner for a lower floor.`];
   if (plan.budget.total !== undefined) lines.push(`2. Approve the ${ngn(plan.budget.total)} budget${plan.budget.feeRatio !== undefined ? ` (${(plan.budget.feeRatio * 100).toFixed(1)}% of expected fee)` : ""}.`);
   if (plan.segments.secondary) lines.push(`${lines.length + 1}. Approve ${SEGMENT_NAMES[plan.segments.secondary].toLowerCase()} as the secondary segment within the Meta and Google lines.`);
   lines.push(`${lines.length + 1}. Mandate the Strategist and Head of Sales to take the price plan to the owner before launch.`);
@@ -362,7 +402,7 @@ function executionAppendix(plan: StrategyPlan): string {
         ["Submit paid creative for ARCON vetting", "Marketing ops", d(-6), "Submission reference logged"],
         ["Measure weekday 08:00 drive times to key nodes", "Content lead", d(-4), "Location sheet updated"],
         ["Photos, video, floor plan, 3D tour", "Content lead", d(-3), "Assets in shared drive"],
-        ["Trust pack: title summary, survey, search report requested", "Sales lead with solicitor", d(-3), "Pack ready for verified buyers"],
+        ["Trust pack: title summary, survey, search report requested", "Sales lead with solicitor", d(-3), `Pack ready for verified ${words(plan).buyers}`],
         ["Consent check on broadcast and email lists (NDPA)", "Marketing ops", d(-3), "Non-consented contacts removed"],
         ["Canonical listing copy and price; co-broke terms to agents", "Listings lead", d(-2), "Terms acknowledged"],
         ["Campaigns built with UTMs; click-to-WhatsApp live", "Performance marketer", d(-2), "Campaigns in review"],
@@ -370,7 +410,7 @@ function executionAppendix(plan: StrategyPlan): string {
       ],
     ),
     "**Lead handling:** first reply within 15 minutes, 08:00 to 20:00 WAT; after-hours leads answered by 09:00 WAT. Qualify on budget near the list price, timeline of 6 months or less, decision-maker or mandated proxy, and funding route. Refer any offer or discount request to an authorized negotiator.",
-    `**CRM tags:** \`${plan.input.listing.id}\` · \`seg:local|diaspora|investor\` · \`src:npc|propertypro|meta|google|agent|crm\` · \`stage:inquiry|qualified|viewing|offer|closed\``,
+    `**CRM tags:** \`${clean(plan.input.listing.id).replace(/`/g, "")}\` · \`seg:local|diaspora|investor\` · \`src:npc|propertypro|meta|google|agent|crm\` · \`stage:inquiry|qualified|viewing|offer|closed\``,
     `**UTM convention:** \`utm_source=meta|google\` · \`utm_medium=paid_social|paid_search\` · \`utm_campaign=${plan.input.listing.id.toLowerCase().replace(/[^a-z0-9]/g, "")}_launch\` · \`utm_content=<creative_id>\``,
   ].join("\n\n");
 }
@@ -383,20 +423,24 @@ function presenterNotes(plan: StrategyPlan, audience: Audience): string {
   const lines: string[] = ["## Presenter Notes"];
   if (audience === "team") {
     lines.push(
-      `**Opening:** "We launch ${l.id} on ${longDate(plan.timeline.launch)} at ${ngn(p.list)}. Our job is ${plan.funnel.qualified} qualified ${plan.input.transaction === "sale" ? "buyers" : "tenants"} and ${plan.funnel.viewings} viewings by ${longDate(plan.timeline.closeDate)}. One consistent listing everywhere, replies inside 15 minutes, and a trust story buyers believe. Gates are on ${plan.timeline.gates.map((g) => longDate(g.date)).join(", ")}."`,
+      `**Opening:** "We launch ${clean(l.id)} on ${longDate(plan.timeline.launch)} at ${words(plan).money(p.list)}. Our job is ${plan.funnel.qualified} qualified ${words(plan).buyers} and ${plan.funnel.viewings} viewings by ${longDate(plan.timeline.closeDate)}. One consistent listing everywhere, replies inside 15 minutes, and a trust story ${words(plan).buyers} believe. Gates are on ${plan.timeline.gates.map((g) => longDate(g.date)).join(", ")}."`,
       "**Likely questions**",
-      `- *Can I offer a discount to close a lead?* No. Quote ${ngn(p.list)} and pass the lead to an authorized negotiator.`,
+      `- *Can I offer a discount to close a lead?* No. Quote ${words(plan).money(p.list)} and pass the lead to an authorized negotiator.`,
       "- *What counts as qualified?* Budget near the list price, timeline of 6 months or less, decision-maker identified, funding route known.",
     );
     return lines.join("\n\n");
   }
-  const history = o.atAsk && o.atList ? ` At ${ngn(l.asking_price_ngn)}, our history says about ${ngn(o.atAsk.close)}${o.atAsk.dom ? ` after ${o.atAsk.dom} days` : ""}; at ${ngn(p.list)}, about ${ngn(o.atList.close)}${o.atList.dom ? ` after ${o.atList.dom} days` : ""}.` : "";
-  const opening = p.keepAsk
-    ? `"The price is right where the market is. Our job is presentation and speed. If it isn't working by ${longDate(gate.date)}, we step to ${ngn(p.step)}, a rule agreed upfront."`
-    : `"We're recommending ${ngn(p.list)}, not ${ngn(l.asking_price_ngn)}: the ${plan.input.transaction === "sale" ? "ask" : "asking rent"} is ${pct(plan.premium)} over comparable ${plan.input.transaction === "sale" ? "homes" : "lettings"} once adjusted.${history} If it isn't working by ${longDate(gate.date)}, we step to ${ngn(p.step)}, a rule agreed upfront.${audience === "leadership" && plan.budget.total !== undefined ? ` I need approval on price, budget (${ngn(plan.budget.total)}), and the step rule today.` : " I need your sign-off on the price and the step rule."}"`;
+  const w = words(plan);
+  const history = o.atAsk && o.atList ? ` At ${w.money(l.asking_price_ngn)}, our history says about ${w.money(o.atAsk.close)}${o.atAsk.dom ? ` after ${o.atAsk.dom} days` : ""}; at ${w.money(p.list)}, about ${w.money(o.atList.close)}${o.atList.dom ? ` after ${o.atList.dom} days` : ""}.` : "";
+  const stepSentence = p.stepAvailable ? ` If it isn't working by ${longDate(gate.date)}, we step to ${w.money(p.step)}, a rule agreed upfront.` : " There is no room for a price step, so presentation and speed carry the campaign.";
+  const opening = p.listAtFloor
+    ? `"The owner's floor of ${w.money(p.list)} sits above what comparable ${w.homes} support (${w.money(plan.compSet.median)} adjusted median). We can list at the floor, but expect a slower campaign and no room to negotiate."`
+    : p.keepAsk
+      ? `"The price is right where the market is. Our job is presentation and speed.${stepSentence}"`
+      : `"We're recommending ${w.money(p.list)}, not ${w.money(l.asking_price_ngn)}: the ${w.ask} is ${pct(plan.premium)} over comparable ${w.homes} once adjusted.${history}${stepSentence}${audience === "leadership" && plan.budget.total !== undefined ? ` I need approval on price, budget (${ngn(plan.budget.total)}), and the step rule today.` : " I need your sign-off on the price and the step rule."}"`;
   lines.push(
     `**Opening:** ${opening}`,
-    `**Three numbers:** ${ngn(plan.compSet.median)} market median. ${ngn(p.list)} list. ${audience === "client" ? `${ngn(p.floor)} floor` : plan.budget.total !== undefined ? `${ngn(plan.budget.total)} budget` : `${ngn(p.step)} step`}.`,
+    `**Three numbers:** ${w.money(plan.compSet.median)} market median. ${w.money(p.list)} list. ${audience === "client" ? `${w.money(p.floor)} floor` : plan.budget.total !== undefined ? `${ngn(plan.budget.total)} budget` : p.stepAvailable ? `${w.money(p.step)} step` : `${w.money(p.floor)} floor`}.`,
     `**Concede if pushed:** confidence is ${plan.confidence.level.toLowerCase()} (${plan.confidence.reason}).`,
     `**Do not concede:** listing above the adjusted comp range without documented differentiators.`,
     "**Likely questions**",
@@ -404,15 +448,17 @@ function presenterNotes(plan: StrategyPlan, audience: Audience): string {
   if (audience === "client") {
     lines.push(
       "- *\"My property is worth more.\"* Walk through the closed comps and their adjustments, then offer the agreed price step as the safeguard.",
-      "- *\"Who sees my documents?\"* Only verified buyers, through our solicitor. Listings state the title type only.",
+      `- *"Who sees my documents?"* Only verified ${w.buyers}, through our solicitor. Listings state the title type only.`,
       `- *\"What if nothing happens by ${longDate(plan.timeline.closeDate)}?\"* The ${longDate(plan.timeline.gates[2].date)} review decides the fallback, with your approval.`,
     );
   } else {
     lines.push(
-      `- *Why not list at ${ngn(l.asking_price_ngn)} and negotiate?* ${o.atAsk ? `Our above-market launches closed ${plan.input.track_record?.above_market_close_vs_list_pct}% vs list.` : "Above-market listings go stale and negotiate down further."}`,
+      `- *Why not list at ${w.money(l.asking_price_ngn)} and negotiate?* ${o.atAsk ? `Our above-market launches closed ${plan.input.track_record?.above_market_close_vs_list_pct}% vs list.` : "Above-market listings go stale and negotiate down further."}`,
       plan.budget.feeRatio !== undefined ? `- *Is the budget worth it?* ${(plan.budget.feeRatio * 100).toFixed(1)}% of expected fee, built from ${plan.funnel.qualified} qualified leads at the target cost per lead.` : "- *Is the budget worth it?* Supply the cost per qualified lead to answer with numbers.",
       plan.segments.secondary ? `- *Why ${plan.segments.secondary}?* ${plan.segments.mix[plan.segments.secondary]}% of qualified inquiries in this band.` : "- *Who buys?* Answer from the CRM inquiry mix.",
-      `- *What if there are no offers by ${longDate(gate.date)}?* Step to ${ngn(p.step)}, pre-approved. The ${longDate(plan.timeline.gates[2].date)} gate decides the fallback.`,
+      p.stepAvailable
+        ? `- *What if there are no offers by ${longDate(gate.date)}?* Step to ${w.money(p.step)}, pre-approved. The ${longDate(plan.timeline.gates[2].date)} gate decides the fallback.`
+        : `- *What if there are no offers by ${longDate(gate.date)}?* There is no step below the floor; the ${longDate(plan.timeline.gates[2].date)} gate decides the fallback.`,
     );
   }
   return lines.join("\n\n");
@@ -421,7 +467,7 @@ function presenterNotes(plan: StrategyPlan, audience: Audience): string {
 export function renderMarketBriefPreview(brief: MarketBrief, ctx: RenderContext): string {
   const a = brief.input.asset;
   return [
-    `# Market Brief Preview: ${a.id}, ${a.district}`,
+    `# Market Brief Preview: ${clean(a.id)}, ${clean(a.district)}`,
     `Free preview | Date: ${longDate(ctx.asOf)} | Confidence: ${brief.confidence.level} (${brief.confidence.reason})`,
     "## Snapshot",
     briefSnapshot(brief),
@@ -452,10 +498,10 @@ function briefSnapshot(brief: MarketBrief): string {
 export function renderMarketBrief(brief: MarketBrief, ctx: RenderContext): string {
   const a = brief.input.asset;
   const out = [
-    `# Market Brief: ${a.id}, ${a.district}`,
+    `# Market Brief: ${clean(a.id)}, ${clean(a.district)}`,
     `Date: ${longDate(ctx.asOf)} | Confidence: ${brief.confidence.level} (${brief.confidence.reason})`,
     "## Recommendation",
-    `**${brief.action}**: ${brief.reason}. Re-test on ${longDate(brief.reviewDate)}: ${brief.trigger}.`,
+    `**${brief.action}${brief.provisional ? " (provisional)" : ""}**: ${brief.reason}. Re-test on ${longDate(brief.reviewDate)}: ${brief.trigger}.`,
     "## Snapshot",
     briefSnapshot(brief),
     "## Evidence",
@@ -507,22 +553,28 @@ function nextSteps(brief: MarketBrief): string[][] {
 export function renderCampaignUpdate(plan: StrategyPlan, update: CampaignUpdate, ctx: RenderContext): string {
   const l = plan.input.listing;
   const fired = update.gates.filter((g) => g.fired);
-  const bottom = `${update.status}: ${update.stages.filter((s) => s.ratio !== undefined).map((s) => `${s.stage.toLowerCase()} at ${Math.round(s.ratio! * 100)}% of plan`).join(", ")}.`;
-  const gateLine = fired.length ? `Gate fired: ${fired.map((g) => `${g.name} (${g.action})`).join("; ")}.` : "No gate fired.";
+  const scored = update.stages.filter((s) => s.ratio !== undefined);
+  const bottom = `${update.status}: ${scored.length ? scored.map((s) => `${s.stage.toLowerCase()} at ${Math.round(s.ratio! * 100)}% of plan`).join(", ") : "too early to score against plan"}.`;
+  // Campaign updates circulate to the team, so gate actions use the floor-free wording.
+  const gateLine = fired.length ? `Gate fired: ${fired.map((g) => `${g.name} (${g.teamAction})`).join("; ")}.` : "No gate fired.";
+  const closeLine = update.pastClose ? ` The target close date (${longDate(plan.timeline.closeDate)}) has passed: decide the fallback now.` : "";
   const out = [
-    `# Campaign Update: ${l.id}, Week ${update.week} (Day ${update.day} of ${plan.timeline.closeDays})`,
-    `Date: ${longDate(ctx.asOf)} | Status: **${update.status}**${ctx.planId ? ` | Plan ID: \`${ctx.planId}\`` : ""}`,
+    `# Campaign Update: ${clean(l.id)}, Week ${update.week} (Day ${update.day} of ${plan.timeline.closeDays})`,
+    `As of: ${longDate(update.asOf)} | Status: **${update.status}**${ctx.planId ? ` | Plan ID: \`${ctx.planId}\`` : ""}`,
     "## Bottom Line",
-    `${bottom} ${gateLine}`,
+    `${bottom} ${gateLine}${closeLine}`,
     "## Funnel vs Plan (cumulative)",
-    table(["Stage", "Plan to date", "Actual", "% of plan"], update.stages.map((s) => [s.stage, s.plan, s.actual, s.ratio !== undefined ? `${Math.round(s.ratio * 100)}%` : "n/a"]), ["l", "r", "r", "r"]),
+    table(["Stage", "Plan to date", "Actual", "% of plan"], update.stages.map((s) => [s.stage, s.note ? "n/a" : s.plan, s.actual, s.ratio !== undefined ? `${Math.round(s.ratio * 100)}%` : s.note ?? "n/a"]), ["l", "r", "r", "r"]),
   ];
+  if (update.objections.length) {
+    out.push("## What Buyers Are Saying", table(["Objection", "Share of viewings"], update.objections.map((o) => [o.objection, `${Math.round(o.share_pct)}%`]), ["l", "r"]));
+  }
   if (update.efficiency.length) {
     out.push("## Spend and Efficiency", table(["Channel", "Spend to date", "Qualified leads", "Cost per qualified lead", "vs target"], update.efficiency.map((e) => [e.channel, ngn(e.spend), e.qualified, e.cpql !== undefined ? ngn(e.cpql) : "n/a", e.vsTarget ?? "n/a"]), ["l", "r", "r", "r", "l"]));
   }
   out.push(
     "## Gate Check",
-    table(["Gate", "Due", "Threshold", "Result", "Action"], update.gates.map((g) => [g.name, `Day ${g.day}`, g.threshold, !g.due ? "Not yet due" : g.fired ? "Fired" : "Not fired", g.fired ? g.action : ""])),
+    table(["Gate", "Due", "Threshold", "Result", "Action"], update.gates.map((g) => [g.name, `Day ${g.day}`, g.threshold, !g.due ? "Not yet due" : g.fired ? "Fired" : "Not fired", g.fired ? g.teamAction : ""])),
     "Status rule: On track if every stage is at 80% or more of plan; At risk if any stage is between 50% and 79%; Off track if any stage is below 50% or a gate fired without its action taken.",
   );
   return out.join("\n\n");

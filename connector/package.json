@@ -1,6 +1,6 @@
 {
   "name": "lagos-brief-connector",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "Paid remote MCP connector for Claude: Lagos listing marketing strategy and market briefs, pay per call via Paystack",
   "type": "module",
@@ -11,9 +11,10 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/src/server.js",
-    "dev": "tsx watch src/server.ts",
+    "dev": "node --env-file-if-exists=.env --import tsx --watch src/server.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test test/*.test.ts"
+    "test": "tsx --test test/*.test.ts",
+    "admin": "node dist/src/admin.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.0",

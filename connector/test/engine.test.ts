@@ -84,7 +84,7 @@ test("missing data is flagged, not invented", () => {
 test("owner floor above every comp is called out", () => {
   const plan = buildStrategy({ ...LK014, listing: { ...LK014.listing, floor_price_ngn: 640_000_000 } });
   assert.equal(plan.pricing.floorAboveMarket, true);
-  assert.ok(plan.warnings.some((w) => /unlikely to close at that floor/.test(w)));
+  assert.ok(plan.flags.some((f) => /unlikely to close at that floor/.test(f.text)));
   assert.equal(plan.pricing.step, 640_000_000);
 });
 
@@ -125,7 +125,7 @@ test("campaign update at day 30 fires the price gate", () => {
 test("formatting", () => {
   assert.equal(ngn(595_000_000), "₦595M");
   assert.equal(ngn(586_500_000), "₦586.5M");
-  assert.equal(ngn(500_000), "₦0.5M");
+  assert.equal(ngn(500_000), "₦500k");
   assert.equal(ngn(65_000), "₦65k");
   assert.equal(roundPrice(595_300_000), 595_000_000);
 });

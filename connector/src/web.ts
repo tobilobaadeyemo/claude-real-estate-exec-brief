@@ -67,7 +67,7 @@ export function landingPage(config: Config): string {
   );
 }
 
-export function connectorCreatedPage(url: string): string {
+export function connectorCreatedPage(url: string, supportEmail?: string): string {
   return page(
     "Your connector URL",
     `<h1>Your connector is ready</h1>
@@ -79,7 +79,7 @@ export function connectorCreatedPage(url: string): string {
 <li>Name it "Lagos Brief" and paste the URL.</li>
 <li>In a chat, enable the connector and ask for a marketing strategy. Your first run is a free preview.</li>
 </ol>
-<p class="muted">Lost the URL? Create a new one; contact support to move credits.</p>`,
+<p class="muted">If the URL leaks, ask Claude to run <code>rotate_connector_url</code> to replace it. Lost it completely? ${supportEmail ? `Email ${escape(supportEmail)} to move your credits to a new URL.` : "Contact support to move your credits to a new URL."}</p>`,
   );
 }
 
@@ -109,6 +109,7 @@ export function privacyPage(config: Config): string {
 <p>We store: your email (for receipts), a hash of your connector token, your credit balance and ledger, payment references, and the listing inputs of strategies you pay for (so audience versions and campaign updates work).</p>
 <p>We do not ask for client names, phone numbers, or addresses. Comparable descriptions should contain type and size only.</p>
 <p>Delete your saved plans at any time with the <code>delete_my_data</code> tool in Claude. Card details are handled by Paystack and never reach this service.</p>
+<p>Server logs record payment references and, once after each restart, one request's IP address to check the proxy setup. They never record connector URLs on our side.</p>
 <p>We process data under the Nigeria Data Protection Act 2023.${config.supportEmail ? ` Requests: ${escape(config.supportEmail)}.` : ""}</p>`,
   );
 }

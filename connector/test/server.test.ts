@@ -33,7 +33,7 @@ const paystack: PaystackClient = {
 
 before(async () => {
   store = new Store(":memory:");
-  const config: Config = { port: 0, baseUrl: "", databasePath: ":memory:", paystackSecretKey: SECRET, paystackBaseUrl: "", packs: DEFAULT_PACKS, trustProxy: false };
+  const config: Config = { port: 0, baseUrl: "", databasePath: ":memory:", paystackSecretKey: SECRET, paystackBaseUrl: "", keyMode: "test", packs: DEFAULT_PACKS, trustProxy: 0 };
   const app = createApp({ config, store, paystack });
   server = app.listen(0);
   await new Promise((r) => server.once("listening", r));
@@ -76,7 +76,7 @@ test("free preview once, locked after, paid unlock end to end", async () => {
   const url = await signup();
   const client = await connect(url);
   const tools = (await client.listTools()).tools.map((t) => t.name).sort();
-  assert.deepEqual(tools, ["account_status", "audience_version", "buy_credits", "campaign_update", "delete_my_data", "market_brief", "marketing_strategy"]);
+  assert.deepEqual(tools, ["account_status", "audience_version", "buy_credits", "campaign_update", "delete_my_data", "market_brief", "marketing_strategy", "rotate_connector_url"]);
 
   const args = { ...LK014, audience: "leadership" } as unknown as Record<string, unknown>;
   const preview = textOf(await client.callTool({ name: "marketing_strategy", arguments: args }));
@@ -114,17 +114,17 @@ test("free preview once, locked after, paid unlock end to end", async () => {
   assert.match(update, /Balance: 6/);
 
   const paid = await fetch(`${base}/paid?reference=${reference}`);
-  assert.match(await paid.text(), /6 credits/);
+  assert.match(await paid.text(), /10 credits added/);
   await client.close();
 });
 
-test("webhook rejects bad signatures and mismatched amounts", async () => {
+test("webhook rejects bad signatures and holds mismatched amounts for review", async () => {
   assert.equal(await webhook({ event: "charge.success", data: { reference: "x" } }, "wrong"), 401);
   const { account } = store.createAccount("buyer@example.com");
-  const payment = store.createPayment(account.id, DEFAULT_PACKS[0]);
+  const payment = store.createPayment(account.id, DEFAULT_PACKS[0], "test");
   verified.set(payment.reference, { status: "success", amount: 100, currency: "NGN", reference: payment.reference });
   assert.equal(await webhook({ event: "charge.success", data: { reference: payment.reference } }), 200);
-  assert.equal(store.getPayment(payment.reference)!.status, "rejected");
+  assert.equal(store.getPayment(payment.reference)!.status, "review");
   assert.equal(store.getAccount(account.id)!.credits, 0);
 });
 
@@ -173,10 +173,10 @@ test("Paystack requests are always naira, in kobo, with the secret key", async (
   assert.equal(tx.currency, "NGN");
 });
 
-test("non-naira settlements are rejected and never credited", () => {
+test("non-naira settlements are held for review and never credited", () => {
   const { account } = store.createAccount("usd@example.com");
-  const payment = store.createPayment(account.id, DEFAULT_PACKS[0]);
-  assert.equal(store.settlePayment(payment.reference, payment.amount_kobo, "USD"), "rejected");
+  const payment = store.createPayment(account.id, DEFAULT_PACKS[0], "test");
+  assert.equal(store.settlePayment(payment.reference, { amount: payment.amount_kobo, currency: "USD" }, "test"), "review");
   assert.equal(store.getAccount(account.id)!.credits, 0);
 });
 

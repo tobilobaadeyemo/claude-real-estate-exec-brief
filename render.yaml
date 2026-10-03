@@ -9,10 +9,13 @@ services:
     plan: starter
     region: frankfurt
     healthCheckPath: /healthz
-    autoDeploy: true
+    # Deploy only after GitHub checks pass; doc-only edits do not restart the payment service.
+    autoDeployTrigger: checksPass
     buildFilter:
       paths:
         - connector/**
+      ignoredPaths:
+        - connector/**/*.md
     disk:
       name: data
       mountPath: /data
@@ -20,8 +23,10 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      # Proxy hops in front of the app (reported as 3 on Render: Cloudflare, load balancer, router).
+      # Check the "proxy_check" log line after the first visit and adjust if client_ip is not the visitor's IP.
       - key: TRUST_PROXY
-        value: "1"
+        value: "3"
       - key: DATABASE_PATH
         value: /data/connector.db
       - key: PAYSTACK_SECRET_KEY
