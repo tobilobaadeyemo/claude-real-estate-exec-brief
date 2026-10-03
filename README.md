@@ -43,6 +43,8 @@ Each marketing strategy comes in three versions from the same analysis:
 | Saved plans and weekly campaign updates | No | Yes |
 | Price | Free | First run free (diagnosis), then pay per call in naira |
 
+Run the paid connector yourself: [GO-LIVE.md](connector/GO-LIVE.md) · [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/tobilobaadeyemo/claude-real-estate-exec-brief)
+
 ## Install
 
 **Claude.ai / Claude Desktop**

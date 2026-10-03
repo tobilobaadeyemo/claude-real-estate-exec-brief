@@ -1,5 +1,7 @@
 import express, { type NextFunction, type Request, type Response } from "express";
 import { pathToFileURL } from "node:url";
+import { chownSync, mkdirSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { loadConfig, type Config } from "./config.js";
 import { Store } from "./store.js";
@@ -196,8 +198,25 @@ export function createApp({ config, store, paystack }: AppDeps) {
   return app;
 }
 
+/**
+ * Container disks usually mount owned by root. When started as root with RUN_AS_UID set,
+ * hand the data directory to that user, then drop privileges before touching the database.
+ */
+export function dropPrivileges(databasePath: string, env: NodeJS.ProcessEnv = process.env): void {
+  if (process.getuid?.() !== 0 || !env.RUN_AS_UID || databasePath === ":memory:") return;
+  const uid = Number(env.RUN_AS_UID);
+  const gid = Number(env.RUN_AS_GID ?? env.RUN_AS_UID);
+  const dir = dirname(databasePath);
+  mkdirSync(dir, { recursive: true });
+  chownSync(dir, uid, gid);
+  for (const entry of readdirSync(dir)) chownSync(join(dir, entry), uid, gid);
+  process.setgid!(gid);
+  process.setuid!(uid);
+}
+
 export function main(): void {
   const config = loadConfig();
+  dropPrivileges(config.databasePath);
   if (!config.paystackSecretKey) console.warn("PAYSTACK_SECRET_KEY is not set: purchases will fail until it is configured.");
   const store = new Store(config.databasePath);
   const paystack = createPaystackClient(config.paystackSecretKey, config.paystackBaseUrl);

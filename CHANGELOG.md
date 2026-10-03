@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.0 (2026-10-03)
+
+### Added
+- One-click Render deploy (`render.yaml`) with a persistent disk, and `connector/GO-LIVE.md`: Paystack Starter Business setup, naira payouts to your bank, test purchase, switch to live, fees per pack
+- Tests proving every Paystack request is NGN in kobo and non-naira settlements are rejected
+- CI builds and boots the Docker image with a root-owned volume
+
+### Changed
+- Container drops from root to uid 1000 after taking ownership of the mounted disk
+- Production refuses to start without a valid Paystack secret key; base URL falls back to Render's external URL
+
 ## 1.1.0 (2026-10-03)
 
 ### Added
