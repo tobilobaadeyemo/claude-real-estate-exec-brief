@@ -1,0 +1,32 @@
+# One-click deploy of the paid connector on Render (Deploy to Render button in README).
+# Paid plan required for the persistent disk that holds accounts, credits, and payments.
+services:
+  - type: web
+    name: lagos-brief-connector
+    runtime: docker
+    dockerfilePath: ./connector/Dockerfile
+    dockerContext: ./connector
+    plan: starter
+    region: frankfurt
+    healthCheckPath: /healthz
+    autoDeploy: true
+    buildFilter:
+      paths:
+        - connector/**
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TRUST_PROXY
+        value: "1"
+      - key: DATABASE_PATH
+        value: /data/connector.db
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: SUPPORT_EMAIL
+        sync: false

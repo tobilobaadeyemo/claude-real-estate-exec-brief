@@ -151,3 +151,39 @@ test("credits never go negative and preview is single use", () => {
   assert.equal(store.charge(account.id, 3, "test"), false);
   assert.equal(store.getAccount(account.id)!.credits, 2);
 });
+
+test("Paystack requests are always naira, in kobo, with the secret key", async () => {
+  const { createPaystackClient } = await import("../src/paystack.js");
+  const calls: { url: string; init?: RequestInit }[] = [];
+  const fakeFetch = async (url: string, init?: RequestInit) => {
+    calls.push({ url, init });
+    const data = url.includes("/verify/")
+      ? { status: "success", amount: 1_500_000, currency: "NGN", reference: "pay_x" }
+      : { authorization_url: "https://checkout.paystack.com/abc" };
+    return new Response(JSON.stringify({ status: true, data }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const client = createPaystackClient("sk_test_abc", "https://api.paystack.co", fakeFetch);
+  await client.initialize({ email: "a@b.co", amountKobo: 1_500_000, reference: "pay_x", callbackUrl: "https://x/paid", metadata: { pack_id: "single" } });
+  const body = JSON.parse(String(calls[0].init!.body));
+  assert.equal(body.currency, "NGN");
+  assert.equal(body.amount, 1_500_000);
+  assert.ok(Number.isInteger(body.amount));
+  assert.equal((calls[0].init!.headers as Record<string, string>).Authorization, "Bearer sk_test_abc");
+  const tx = await client.verify("pay_x");
+  assert.equal(tx.currency, "NGN");
+});
+
+test("non-naira settlements are rejected and never credited", () => {
+  const { account } = store.createAccount("usd@example.com");
+  const payment = store.createPayment(account.id, DEFAULT_PACKS[0]);
+  assert.equal(store.settlePayment(payment.reference, payment.amount_kobo, "USD"), "rejected");
+  assert.equal(store.getAccount(account.id)!.credits, 0);
+});
+
+test("config refuses a missing or malformed key in production", async () => {
+  const { loadConfig } = await import("../src/config.js");
+  assert.throws(() => loadConfig({ NODE_ENV: "production" }), /required in production/);
+  assert.throws(() => loadConfig({ PAYSTACK_SECRET_KEY: "pk_live_public" }), /secret key/);
+  assert.equal(loadConfig({ RENDER_EXTERNAL_URL: "https://brief.onrender.com/" }).baseUrl, "https://brief.onrender.com");
+  for (const p of loadConfig({}).packs) assert.ok(Number.isInteger(p.price_kobo) && p.price_kobo % 100 === 0);
+});

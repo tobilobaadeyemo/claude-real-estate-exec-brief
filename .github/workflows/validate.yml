@@ -34,3 +34,18 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t lagos-brief-connector connector
+      - name: Boot with a root-owned volume and check health
+        run: |
+          docker run -d --name brief -p 3000:3000 -v brief-data:/data \
+            -e PAYSTACK_SECRET_KEY=sk_test_ci -e PUBLIC_BASE_URL=http://localhost:3000 lagos-brief-connector
+          for i in $(seq 1 30); do curl -fsS localhost:3000/healthz && break; sleep 1; done
+          curl -fsS localhost:3000/healthz
+          test "$(docker exec brief stat -c %u /data/connector.db)" = "1000"
+          docker logs brief

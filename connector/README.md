@@ -51,8 +51,14 @@ Open `http://localhost:3000`, create a connector URL, and test it with any MCP c
 
 ## Go live
 
-1. **Paystack (Nigerian business).** Register the business (CAC) and complete Paystack Nigeria compliance. In the dashboard, open Settings > API Keys & Webhooks: copy the secret key, and set the webhook URL to `https://<your-domain>/paystack/webhook`.
-2. **Host.** Any Docker host with a persistent volume works (Fly.io, Railway, Render). Mount a volume at `/data`, run one instance, and set the environment variables from `.env.example` (`PUBLIC_BASE_URL`, `DATABASE_PATH=/data/connector.db`, `PAYSTACK_SECRET_KEY`, `TRUST_PROXY=1`).
+Step-by-step, click by click: **[GO-LIVE.md](GO-LIVE.md)** (Paystack Starter Business, one-click Render deploy, test purchase, switch to live, payouts to your bank).
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/tobilobaadeyemo/claude-real-estate-exec-brief)
+
+Summary:
+
+1. **Paystack Nigeria.** Start as a Starter Business (BVN and ID, no CAC; ₦8M lifetime collections) or a Registered Business. Payouts settle in naira to your Nigerian bank account the next working day. Set the webhook URL to `https://<your-domain>/paystack/webhook`.
+2. **Host.** `render.yaml` deploys the Docker image with a persistent disk at `/data`. Any other Docker host with a volume works too (Fly.io, Railway); set the variables from `.env.example`.
    ```bash
    docker build -t lagos-brief-connector connector
    docker run -p 3000:3000 -v brief-data:/data --env-file connector/.env lagos-brief-connector
@@ -68,6 +74,8 @@ Open `http://localhost:3000`, create a connector URL, and test it with any MCP c
 - Webhooks are accepted only with a valid `x-paystack-signature` (HMAC-SHA512), then re-verified with the Paystack API. Credits are granted once per reference, only when amount and currency match the pack.
 - Charges are atomic and happen only after a result is computed; balances cannot go negative.
 - Free previews cost nothing to serve (no LLM call), so throwaway accounts do not cost money.
+- Charges are in naira only: `currency: "NGN"` is fixed in code, and settlements in any other currency or amount are rejected.
+- The container starts as root only to take ownership of the mounted disk, then drops to uid 1000 before opening the database. In production, the server refuses to start without a valid Paystack secret key.
 - The rate limiter and SQLite assume a single instance. Move to Postgres and a shared limiter before scaling out.
 
 ## Roadmap

@@ -13,7 +13,9 @@ WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json ./
-RUN mkdir -p /data && chown node:node /data
-USER node
+# Starts as root only to take ownership of the mounted disk, then the server
+# drops to the unprivileged node user (uid 1000) before opening the database.
+ENV RUN_AS_UID=1000 RUN_AS_GID=1000 DATABASE_PATH=/data/connector.db PORT=3000
+RUN mkdir -p /data
 EXPOSE 3000
 CMD ["node", "dist/src/server.js"]
