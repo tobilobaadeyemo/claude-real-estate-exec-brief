@@ -1,4 +1,7 @@
-FROM node:22-slim AS build
+# Full image for the build: it ships python3, make, and g++, which better-sqlite3 needs
+# when no prebuilt binary matches this Node version. Same Debian release and Node
+# version as the slim runtime below, so the compiled module is ABI compatible.
+FROM node:22 AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
