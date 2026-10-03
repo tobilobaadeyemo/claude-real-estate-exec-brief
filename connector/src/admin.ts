@@ -2,7 +2,7 @@
  * Owner tools, run from the host's shell (Render: your service > Shell):
  *
  *   node dist/src/admin.js status <email|account-id>
- *   node dist/src/admin.js review                       payments held for review, and pending ones older than 30 minutes
+ *   node dist/src/admin.js review                       held, disputed, and pending (over 30 minutes) payments
  *   node dist/src/admin.js reconcile                    re-check pending payments older than 10 minutes with Paystack
  *   node dist/src/admin.js settle <reference> [--force] re-check one payment; --force credits it after you have checked it yourself
  *   node dist/src/admin.js grant <email|account-id> <credits> <reason>
@@ -41,7 +41,7 @@ export async function runAdmin(argv: string[], out: (line: string) => void = con
         break;
       }
       case "review": {
-        for (const p of [...store.listPayments(["review"]), ...store.listPayments(["pending"], 30)]) {
+        for (const p of [...store.listPayments(["review", "disputed"]), ...store.listPayments(["pending"], 30)]) {
           out(`${p.reference}  ${p.status}  account=${p.account_id}  pack=${p.pack_id}  price=${p.amount_kobo / 100} NGN  reason=${p.review_reason ?? "-"}  created=${p.created_at}`);
         }
         break;

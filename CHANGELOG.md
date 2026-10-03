@@ -27,6 +27,15 @@ Pre-launch audit of the paid connector: 5 review dimensions, every finding adver
 - Campaign update: gates use their stated thresholds, offers scored from the price gate, past-close status, as-of date, objections
 - Honest reads for missing data, lease wording, January diaspora window, table-cell escaping, money formatting at unit boundaries
 
+### Follow-ups from the adversarial review of these fixes
+- Pre-1.3 databases: 'rejected' payments become reviewable; payments from before mode tracking are checked with Paystack on a live start and voided unless live
+- Partial refunds remove credits in proportion; chargebacks hold credits and restore them if the merchant wins
+- Full rate limiters evict the oldest key instead of refusing new visitors
+- Privilege drop only inside DATA_ROOT (default /data), refusing symlinked or outside directories
+- Junk buy-link submissions no longer count against the account's purchase limit
+- Proxy check runs on request (?proxy_check=1) with a GO-LIVE test that catches over-counting
+- Free preview keyed by normalized mailbox (+tags, Gmail dots); signup limit 20 per IP per hour
+
 ### Operations
 - Render deploys only after checks pass and ignores doc-only edits; keep-alive timeouts; listen failures exit non-zero; shutdown deadline; CI prints container logs on failure; `npm run dev` loads `.env`
 - GO-LIVE: pass-fees guidance, private URL while on test keys, proxy check, accurate Payouts on Demand and foreign card fees, admin commands

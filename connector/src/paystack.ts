@@ -27,14 +27,21 @@ export interface PaystackClient {
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
+/** A Paystack API error with its HTTP status (404 means the reference is unknown to this key's mode). */
+export class PaystackError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
 export function createPaystackClient(secretKey: string, baseUrl = "https://api.paystack.co", fetchImpl: FetchLike = fetch): PaystackClient {
   const headers = { Authorization: `Bearer ${secretKey}`, "Content-Type": "application/json" };
 
   async function call<T>(path: string, init: RequestInit): Promise<T> {
     if (!secretKey) throw new Error("PAYSTACK_SECRET_KEY is not configured");
     const res = await fetchImpl(`${baseUrl}${path}`, { ...init, headers, signal: AbortSignal.timeout(15_000) });
-    const body = (await res.json()) as { status: boolean; message?: string; data?: T };
-    if (!res.ok || !body.status || !body.data) throw new Error(`Paystack ${path.split("/").slice(0, 3).join("/")} failed: ${body.message ?? res.status}`);
+    const body = (await res.json().catch(() => ({ status: false }))) as { status: boolean; message?: string; data?: T };
+    if (!res.ok || !body.status || !body.data) throw new PaystackError(`Paystack ${path.split("/").slice(0, 3).join("/")} failed: ${body.message ?? res.status}`, res.status);
     return body.data;
   }
 

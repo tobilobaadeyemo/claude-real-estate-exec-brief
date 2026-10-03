@@ -53,7 +53,14 @@ Faster access later: once your business has had at least one payout a week for f
 4. Ask again. You get a buy link. Open it, choose a pack, and pay with one of Paystack's test cards (Paystack docs, "Test Payments").
 5. The return page confirms the credits added. Ask Claude again: you get the full strategy.
 6. In the Paystack dashboard (test mode), the transaction shows in **NGN**.
-7. In Render, open **Logs** and find the line with `"event":"proxy_check"`. `client_ip` should be your own internet address (search "what is my IP" to compare). If it shows a `10.x.x.x` address instead, raise `TRUST_PROXY` by 1 in Render's **Environment**; if it shows an address you did not send, lower it by 1.
+7. Check the proxy setting (it decides which visitor address the rate limits see). Do these two checks at least 10 seconds apart:
+   - In your browser, open `https://<your-service>.onrender.com/?proxy_check=1`
+   - In a computer terminal, run `curl -H "X-Forwarded-For: 1.2.3.4" "https://<your-service>.onrender.com/?proxy_check=1"`
+
+   In Render, open **Logs** and find the two lines with `"event":"proxy_check"`:
+   - First line: `client_ip` should be your own internet address (search "what is my IP" to compare). If it is a `10.x.x.x` address, raise `TRUST_PROXY` by 1 in Render's **Environment**.
+   - Second line: `client_ip` must **not** be `1.2.3.4`. If it is, lower `TRUST_PROXY` by 1.
+   - Repeat after any change until both checks pass.
 
 ## Step 4: Switch to live money
 
@@ -82,7 +89,11 @@ Your other running costs are Render hosting. The connector makes no AI calls, so
 
 ## When a payment needs attention
 
-Payments that do not match a pack (wrong amount or currency, or a test payment on live keys) are **held for review**, never silently dropped. The buyer sees a "needs a manual check" page with your support email. Refunds and chargebacks you make in Paystack remove the matching credits automatically.
+Payments that do not match a pack (wrong amount or currency, or a test payment on live keys) are **held for review**, never silently dropped. The buyer sees a "needs a manual check" page with your support email.
+
+Refunds and chargebacks are handled automatically:
+- **Refund** (from your Paystack dashboard): credits come off in proportion to the amount refunded, rounded in the buyer's favour. A full refund removes all of the pack's credits.
+- **Chargeback opened**: the pack's remaining credits are held. If you win the dispute, they come back; if the buyer wins, they stay removed.
 
 Owner tools run from Render's **Shell** tab (your service > Shell):
 

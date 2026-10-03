@@ -25,10 +25,11 @@ export interface StoredPlan {
 
 /**
  * pending: checkout started. paid: credited. review: Paystack reported a payment that did not match
- * the pack (held for the owner, never terminal). reversed: refunded or charged back. voided: a test-mode
+ * the pack (held for the owner, never terminal). disputed: a chargeback is open; the credits are held
+ * and come back if the merchant wins. reversed: fully refunded or a chargeback lost. voided: a test-mode
  * payment cancelled when the service switched to live keys.
  */
-export type PaymentStatus = "pending" | "paid" | "review" | "reversed" | "voided";
+export type PaymentStatus = "pending" | "paid" | "review" | "disputed" | "reversed" | "voided";
 
 export interface Payment {
   reference: string;
@@ -41,6 +42,8 @@ export interface Payment {
   paid_amount: number | null;
   review_reason: string | null;
   last_verified_at: string | null;
+  refunded_kobo: number | null;
+  credits_reversed: number | null;
   created_at: string;
   paid_at: string | null;
 }
@@ -95,12 +98,28 @@ CREATE INDEX IF NOT EXISTS plans_account ON plans(account_id);
 
 /** Columns added after the first release; applied idempotently on startup. */
 const MIGRATIONS: [table: string, column: string, ddl: string][] = [
-  ["payments", "mode", "ALTER TABLE payments ADD COLUMN mode TEXT"],
+  // Rows that predate the column are marked 'legacy': their mode is re-checked with Paystack on a live start.
+  ["payments", "mode", "ALTER TABLE payments ADD COLUMN mode TEXT; UPDATE payments SET mode = 'legacy' WHERE mode IS NULL"],
+  ["payments", "refunded_kobo", "ALTER TABLE payments ADD COLUMN refunded_kobo INTEGER NOT NULL DEFAULT 0"],
+  ["payments", "credits_reversed", "ALTER TABLE payments ADD COLUMN credits_reversed INTEGER NOT NULL DEFAULT 0"],
+  ["accounts", "email_key", "ALTER TABLE accounts ADD COLUMN email_key TEXT"],
   ["payments", "paid_amount", "ALTER TABLE payments ADD COLUMN paid_amount INTEGER"],
   ["payments", "review_reason", "ALTER TABLE payments ADD COLUMN review_reason TEXT"],
   ["payments", "last_verified_at", "ALTER TABLE payments ADD COLUMN last_verified_at TEXT"],
   ["plans", "input_hash", "ALTER TABLE plans ADD COLUMN input_hash TEXT"],
 ];
+
+/**
+ * Mailbox identity for the one-free-preview rule: case-insensitive, without +tags, and without dots
+ * for Gmail, so name+1@gmail.com and n.a.m.e@gmail.com count as the same person.
+ */
+export function emailKey(email: string): string {
+  const [local = "", domain = ""] = email.trim().toLowerCase().split("@");
+  let user = local.split("+")[0];
+  const gmail = domain === "gmail.com" || domain === "googlemail.com";
+  if (gmail) user = user.replace(/\./g, "");
+  return `${user}@${gmail ? "gmail.com" : domain}`;
+}
 
 export function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
@@ -131,6 +150,12 @@ export class Store {
     }
     this.db.exec("CREATE INDEX IF NOT EXISTS plans_hash ON plans(account_id, input_hash)");
     this.db.exec("CREATE INDEX IF NOT EXISTS payments_status ON payments(status, created_at)");
+    this.db.exec("CREATE INDEX IF NOT EXISTS accounts_email_key ON accounts(email_key)");
+    // Payments 'rejected' by versions before 1.3 become reviewable instead of stranded.
+    this.db.prepare("UPDATE payments SET status = 'review', review_reason = COALESCE(review_reason, 'rejected before v1.3') WHERE status = 'rejected'").run();
+    const unkeyed = this.db.prepare("SELECT id, email FROM accounts WHERE email_key IS NULL").all() as { id: string; email: string }[];
+    const setKey = this.db.prepare("UPDATE accounts SET email_key = ? WHERE id = ?");
+    for (const a of unkeyed) setKey.run(emailKey(a.email), a.id);
   }
 
   private now(): string {
@@ -142,8 +167,8 @@ export class Store {
     const token = randomBytes(32).toString("base64url");
     const account: Account = { id: id("acc"), email, credits: 0, preview_used: 0, created_at: this.now() };
     this.db
-      .prepare("INSERT INTO accounts (id, email, token_hash, credits, preview_used, created_at) VALUES (?, ?, ?, 0, 0, ?)")
-      .run(account.id, email, hashToken(token), account.created_at);
+      .prepare("INSERT INTO accounts (id, email, email_key, token_hash, credits, preview_used, created_at) VALUES (?, ?, ?, ?, 0, 0, ?)")
+      .run(account.id, email, emailKey(email), hashToken(token), account.created_at);
     return { account, token };
   }
 
@@ -201,15 +226,24 @@ export class Store {
     return removed;
   }
 
+  private previewUsedElsewhere(accountId: string): boolean {
+    return Boolean(
+      this.db
+        .prepare("SELECT 1 FROM accounts WHERE email_key = (SELECT email_key FROM accounts WHERE id = ?) AND preview_used = 1 AND id != ? LIMIT 1")
+        .get(accountId, accountId),
+    );
+  }
+
   /**
-   * Claims the one free preview. It is per account and per email address, so signing up again
-   * with the same email does not unlock another preview.
+   * Claims the one free preview. It is per account and per mailbox (see emailKey), so signing up
+   * again with the same address, a +tag, or Gmail dots does not unlock another preview. Emails are
+   * not verified, so this is a deterrent, not a guarantee; previews cost nothing to serve.
    */
   claimPreview(accountId: string): boolean {
     return this.db.transaction(() => {
       const account = this.getAccount(accountId);
       if (!account || account.preview_used) return false;
-      const other = this.db.prepare("SELECT 1 FROM accounts WHERE email = ? AND preview_used = 1 AND id != ? LIMIT 1").get(account.email, accountId);
+      const other = this.previewUsedElsewhere(accountId);
       this.db.prepare("UPDATE accounts SET preview_used = 1 WHERE id = ?").run(accountId);
       return !other;
     })();
@@ -218,7 +252,7 @@ export class Store {
   previewAvailable(accountId: string): boolean {
     const account = this.getAccount(accountId);
     if (!account || account.preview_used) return false;
-    return !this.db.prepare("SELECT 1 FROM accounts WHERE email = ? AND preview_used = 1 AND id != ? LIMIT 1").get(account.email, accountId);
+    return !this.previewUsedElsewhere(accountId);
   }
 
   /** Returns the account's live checkout link id, creating one only when none has 1 hour or more left. */
@@ -261,6 +295,8 @@ export class Store {
       paid_amount: null,
       review_reason: null,
       last_verified_at: null,
+      refunded_kobo: 0,
+      credits_reversed: 0,
       created_at: this.now(),
       paid_at: null,
     };
@@ -305,7 +341,7 @@ export class Store {
         log("settle_unknown_reference", { reference });
         return "unknown";
       }
-      if (payment.status === "paid" || payment.status === "reversed" || payment.status === "voided") return "already";
+      if (payment.status !== "pending" && payment.status !== "review") return "already";
       const requested = tx.requestedAmount ?? tx.amount;
       const problems: string[] = [];
       if (tx.currency !== "NGN") problems.push(`currency ${tx.currency}`);
@@ -328,34 +364,120 @@ export class Store {
     })();
   }
 
-  /** Refund or chargeback: marks the payment reversed and removes its credits (as many as remain). */
+  /** Admin: fully reverse a payment and remove its remaining credits (as many as the balance allows). */
   reversePayment(reference: string, reason: string): { status: "reversed" | "already" | "unknown" | "not_paid"; removed: number; shortfall: number } {
     return this.db.transaction(() => {
       const payment = this.getPayment(reference);
       if (!payment) return { status: "unknown" as const, removed: 0, shortfall: 0 };
-      if (payment.status === "reversed") return { status: "already" as const, removed: 0, shortfall: 0 };
-      if (payment.status !== "paid") {
+      if (payment.status === "reversed" || payment.status === "voided") return { status: "already" as const, removed: 0, shortfall: 0 };
+      if (payment.status !== "paid" && payment.status !== "disputed") {
         this.db.prepare("UPDATE payments SET status = 'reversed', review_reason = ? WHERE reference = ?").run(reason, reference);
         return { status: "not_paid" as const, removed: 0, shortfall: 0 };
       }
-      const removed = this.debitUpTo(payment.account_id, payment.credits, `reversal:${reason}`, reference);
-      this.db.prepare("UPDATE payments SET status = 'reversed', review_reason = ? WHERE reference = ?").run(reason, reference);
-      const shortfall = payment.credits - removed;
-      log("payment_reversed", { reference, account: payment.account_id, reason, removed, shortfall });
-      return { status: "reversed" as const, removed, shortfall };
+      const owed = payment.credits - (payment.credits_reversed ?? 0);
+      const removed = this.debitUpTo(payment.account_id, owed, `reversal:${reason}`, reference);
+      this.db.prepare("UPDATE payments SET status = 'reversed', review_reason = ?, credits_reversed = credits_reversed + ? WHERE reference = ?").run(reason, removed, reference);
+      log("payment_reversed", { reference, account: payment.account_id, reason, removed, shortfall: owed - removed });
+      return { status: "reversed" as const, removed, shortfall: owed - removed };
     })();
+  }
+
+  /**
+   * A refund (full or partial) processed in Paystack. Credits come off in proportion to the amount
+   * refunded so far, rounded down in the buyer's favour; a full refund removes all of them.
+   */
+  refundPayment(reference: string, refundKobo: number | undefined): { status: "refunded" | "partial" | "unknown" | "not_paid"; removed: number } {
+    return this.db.transaction(() => {
+      const payment = this.getPayment(reference);
+      if (!payment) {
+        log("refund_unknown_reference", { reference });
+        return { status: "unknown" as const, removed: 0 };
+      }
+      if (payment.status !== "paid" && payment.status !== "disputed") {
+        log("refund_on_unpaid_payment", { reference, status: payment.status });
+        return { status: "not_paid" as const, removed: 0 };
+      }
+      const base = payment.paid_amount ?? payment.amount_kobo;
+      const refunded = Math.min(base, (payment.refunded_kobo ?? 0) + (refundKobo ?? base));
+      const full = refunded >= base;
+      const target = full ? payment.credits : Math.floor((payment.credits * refunded) / base);
+      const toRemove = Math.max(0, target - (payment.credits_reversed ?? 0));
+      const removed = this.debitUpTo(payment.account_id, toRemove, "refund", reference);
+      this.db
+        .prepare("UPDATE payments SET refunded_kobo = ?, credits_reversed = credits_reversed + ?, status = CASE WHEN ? THEN 'reversed' ELSE status END WHERE reference = ?")
+        .run(refunded, removed, full ? 1 : 0, reference);
+      log("payment_refunded", { reference, account: payment.account_id, refunded_kobo: refunded, of_kobo: base, removed, shortfall: toRemove - removed });
+      return { status: full ? ("refunded" as const) : ("partial" as const), removed };
+    })();
+  }
+
+  /** A chargeback was opened: hold the payment's remaining credits until the dispute resolves. */
+  holdForDispute(reference: string): { status: "held" | "already" | "unknown" | "not_paid"; removed: number } {
+    return this.db.transaction(() => {
+      const payment = this.getPayment(reference);
+      if (!payment) return { status: "unknown" as const, removed: 0 };
+      if (payment.status === "disputed") return { status: "already" as const, removed: 0 };
+      if (payment.status !== "paid") return { status: "not_paid" as const, removed: 0 };
+      const owed = payment.credits - (payment.credits_reversed ?? 0);
+      const removed = this.debitUpTo(payment.account_id, owed, "dispute_hold", reference);
+      this.db.prepare("UPDATE payments SET status = 'disputed', credits_reversed = credits_reversed + ? WHERE reference = ?").run(removed, reference);
+      log("payment_disputed", { reference, account: payment.account_id, held: removed, shortfall: owed - removed });
+      return { status: "held" as const, removed };
+    })();
+  }
+
+  /** Dispute resolved: the merchant won (credits come back) or the buyer won (payment reversed). */
+  resolveDispute(reference: string, merchantWon: boolean | undefined): { status: "restored" | "reversed" | "pending_review" | "unknown" | "not_disputed"; credits: number } {
+    return this.db.transaction(() => {
+      const payment = this.getPayment(reference);
+      if (!payment) return { status: "unknown" as const, credits: 0 };
+      if (payment.status !== "disputed") return { status: "not_disputed" as const, credits: 0 };
+      if (merchantWon === undefined) {
+        log("dispute_outcome_unclear", { reference, account: payment.account_id });
+        return { status: "pending_review" as const, credits: 0 };
+      }
+      if (!merchantWon) {
+        this.db.prepare("UPDATE payments SET status = 'reversed', review_reason = 'chargeback lost' WHERE reference = ?").run(reference);
+        log("dispute_lost", { reference, account: payment.account_id });
+        return { status: "reversed" as const, credits: 0 };
+      }
+      const refundCredits = payment.refunded_kobo ? Math.floor((payment.credits * payment.refunded_kobo) / (payment.paid_amount ?? payment.amount_kobo)) : 0;
+      const restore = Math.max(0, (payment.credits_reversed ?? 0) - refundCredits);
+      if (restore > 0) this.grant(payment.account_id, restore, "dispute_won", reference);
+      this.db.prepare("UPDATE payments SET status = 'paid', credits_reversed = credits_reversed - ? WHERE reference = ?").run(restore, reference);
+      log("dispute_won", { reference, account: payment.account_id, restored: restore });
+      return { status: "restored" as const, credits: restore };
+    })();
+  }
+
+  private voidPayment(p: Payment, reason: string): void {
+    const owed = p.credits - (p.credits_reversed ?? 0);
+    const removed = this.debitUpTo(p.account_id, owed, reason, p.reference);
+    this.db.prepare("UPDATE payments SET status = 'voided', credits_reversed = credits_reversed + ? WHERE reference = ?").run(removed, p.reference);
+    log("test_payment_voided", { reference: p.reference, account: p.account_id, removed, reason });
   }
 
   /** On live keys: cancel credits that came from test-mode payments. Returns how many payments were voided. */
   voidTestCredits(): number {
     return this.db.transaction(() => {
-      const rows = this.db.prepare("SELECT * FROM payments WHERE status = 'paid' AND mode = 'test'").all() as Payment[];
-      for (const p of rows) {
-        const removed = this.debitUpTo(p.account_id, p.credits, "void:test-mode", p.reference);
-        this.db.prepare("UPDATE payments SET status = 'voided' WHERE reference = ?").run(p.reference);
-        log("test_payment_voided", { reference: p.reference, account: p.account_id, removed });
-      }
+      const rows = this.db.prepare("SELECT * FROM payments WHERE status IN ('paid', 'disputed') AND mode = 'test'").all() as Payment[];
+      for (const p of rows) this.voidPayment(p, "void:test-mode");
       return rows.length;
+    })();
+  }
+
+  /** Paid payments recorded before payment modes were tracked; checked against Paystack on a live start. */
+  legacyPaidPayments(): Payment[] {
+    return this.db.prepare("SELECT * FROM payments WHERE status IN ('paid', 'disputed') AND mode = 'legacy'").all() as Payment[];
+  }
+
+  /** Records the result of checking a legacy payment: live payments are kept, anything else is voided. */
+  resolveLegacyPayment(reference: string, isLive: boolean): void {
+    this.db.transaction(() => {
+      const p = this.getPayment(reference);
+      if (!p || p.mode !== "legacy") return;
+      if (isLive) this.db.prepare("UPDATE payments SET mode = 'live' WHERE reference = ?").run(reference);
+      else this.voidPayment(p, "void:legacy-not-live");
     })();
   }
 

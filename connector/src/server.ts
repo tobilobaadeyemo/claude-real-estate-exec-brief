@@ -1,12 +1,12 @@
 import express, { type NextFunction, type Request, type Response } from "express";
 import { pathToFileURL } from "node:url";
-import { chownSync, lstatSync, mkdirSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { lchownSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { loadConfig, type Config } from "./config.js";
 import { Store, type Account } from "./store.js";
 import { createMcpServer } from "./mcp.js";
-import { createPaystackClient, verifyWebhookSignature, type PaystackClient } from "./paystack.js";
+import { createPaystackClient, PaystackError, verifyWebhookSignature, type PaystackClient } from "./paystack.js";
 import { buyPage, connectorCreatedPage, landingPage, messagePage, privacyPage } from "./web.js";
 
 const EMAIL = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$/;
@@ -14,8 +14,9 @@ const MAX_LIMITER_KEYS = 50_000;
 
 /**
  * Fixed-window limiter keyed by caller; enough for a single-instance service.
- * Expired keys are swept on a timer (never on the request path), and the key table is capped,
- * so attacker-chosen keys cannot make each request slower.
+ * Expired keys are swept on a timer (never on the request path), and the key table is capped:
+ * when full, the oldest key is evicted, so attacker-chosen keys can neither slow requests down
+ * nor lock new visitors out.
  */
 export function rateLimit(limit: number, windowMs: number, key: (req: Request) => string) {
   const hits = new Map<string, { count: number; reset: number }>();
@@ -30,9 +31,10 @@ export function rateLimit(limit: number, windowMs: number, key: (req: Request) =
     const entry = hits.get(k);
     if (!entry || entry.reset < now) {
       if (!entry && hits.size >= MAX_LIMITER_KEYS) {
-        res.status(429).set("Retry-After", "60").send("Too many requests");
-        return;
+        const oldest = hits.keys().next().value;
+        if (oldest !== undefined) hits.delete(oldest);
       }
+      hits.delete(k);
       hits.set(k, { count: 1, reset: now + windowMs });
       return next();
     }
@@ -76,11 +78,12 @@ export function createApp({ config, store, paystack }: AppDeps) {
   if (config.trustProxy > 0) app.set("trust proxy", config.trustProxy);
   app.use(securityHeaders);
 
-  // One log line on the first real request, so the operator can check TRUST_PROXY against the platform.
-  let proxyChecked = config.trustProxy === 0;
+  // Visiting any page with ?proxy_check=1 writes one log line (at most every 10 seconds), so the
+  // operator can check TRUST_PROXY against the platform. See GO-LIVE.md, Step 3.
+  let lastProxyLog = 0;
   app.use((req, _res, next) => {
-    if (!proxyChecked && req.path !== "/healthz") {
-      proxyChecked = true;
+    if (req.query.proxy_check === "1" && Date.now() - lastProxyLog > 10_000) {
+      lastProxyLog = Date.now();
       console.log(JSON.stringify({ event: "proxy_check", trust_proxy_hops: config.trustProxy, client_ip: req.ip, forwarded_for: req.get("x-forwarded-for") ?? null }));
     }
     next();
@@ -108,8 +111,16 @@ export function createApp({ config, store, paystack }: AppDeps) {
       if (event.event === "charge.success" && reference) {
         const tx = await paystack.verify(reference);
         if (tx.status === "success") store.settlePayment(tx.reference, tx, config.keyMode);
-      } else if ((event.event === "refund.processed" || event.event === "charge.dispute.create") && reference) {
-        store.reversePayment(reference, event.event);
+      } else if (event.event === "refund.processed" && reference) {
+        // Partial refunds remove credits in proportion; a refund with no amount is treated as full.
+        const amount = typeof event.data?.amount === "number" ? event.data.amount : undefined;
+        store.refundPayment(reference, amount);
+      } else if (event.event === "charge.dispute.create" && reference) {
+        store.holdForDispute(reference);
+      } else if (event.event === "charge.dispute.resolve" && reference) {
+        // "declined": the merchant declined the chargeback and keeps the money. "merchant-accepted": the buyer is refunded.
+        const resolution = String(event.data?.resolution ?? "");
+        store.resolveDispute(reference, resolution === "declined" ? true : resolution === "merchant-accepted" ? false : undefined);
       }
       res.status(200).end();
     } catch (err) {
@@ -129,7 +140,7 @@ export function createApp({ config, store, paystack }: AppDeps) {
     res.type("html").send(privacyPage(config));
   });
 
-  app.post("/signup", rateLimit(30, 3_600_000, ipOf), (req, res) => {
+  app.post("/signup", rateLimit(20, 3_600_000, ipOf), (req, res) => {
     const email = String(req.body?.email ?? "").trim().toLowerCase();
     if (!EMAIL.test(email)) {
       res.status(400).type("html").send(messagePage("Check your email", "Enter a valid email address."));
@@ -148,9 +159,11 @@ export function createApp({ config, store, paystack }: AppDeps) {
     res.set("Cache-Control", "no-store").type("html").send(buyPage(checkout.id, config));
   });
 
-  // Purchases are limited per account (the checkout identifies it), not per IP, so buyers behind
-  // a shared proxy or carrier NAT never block each other.
-  const purchaseLimiter = rateLimit(20, 3_600_000, (req) => String(res_locals(req).accountId ?? ipOf(req)));
+  // Valid purchase attempts are limited per account and IP, with a higher ceiling per account,
+  // so buyers behind a shared proxy or carrier NAT never block each other, and someone holding an
+  // account's buy link cannot lock its owner out with junk submissions (those are rejected first).
+  const purchasePerAccountIp = rateLimit(20, 3_600_000, (req) => `${res_locals(req).accountId}:${ipOf(req)}`);
+  const purchasePerAccount = rateLimit(100, 3_600_000, (req) => String(res_locals(req).accountId));
   app.post(
     "/buy/:checkoutId",
     rateLimit(120, 60_000, ipOf),
@@ -161,18 +174,21 @@ export function createApp({ config, store, paystack }: AppDeps) {
         res.status(400).type("html").send(messagePage("Could not start payment", "The link expired. Ask Claude for a new buy link."));
         return;
       }
-      res_locals(req).accountId = account.id;
-      res_locals(req).account = account;
-      next();
-    },
-    purchaseLimiter,
-    async (req, res) => {
-      const account = res_locals(req).account as Account;
       const pack = config.packs.find((p) => p.id === String(req.body?.pack ?? ""));
       if (!pack) {
         res.status(400).type("html").send(messagePage("Could not start payment", "Choose one of the listed packs."));
         return;
       }
+      res_locals(req).accountId = account.id;
+      res_locals(req).account = account;
+      res_locals(req).pack = pack;
+      next();
+    },
+    purchasePerAccountIp,
+    purchasePerAccount,
+    async (req, res) => {
+      const account = res_locals(req).account as Account;
+      const pack = res_locals(req).pack as Config["packs"][number];
       try {
         const payment = store.createPayment(account.id, pack, config.keyMode);
         const { authorizationUrl } = await paystack.initialize({
@@ -290,24 +306,31 @@ const DB_FILES = ["", "-wal", "-shm", "-journal"];
  * Container disks usually mount owned by root. When started as root with RUN_AS_UID set,
  * hand the data directory and the database files to that user, then drop privileges
  * (including root's supplementary groups) before touching the database.
+ * Only a real directory inside DATA_ROOT (default /data) is ever handed over, and symlinks are
+ * never followed while root.
  */
 export function dropPrivileges(databasePath: string, env: NodeJS.ProcessEnv = process.env): void {
   if (process.getuid?.() !== 0 || !env.RUN_AS_UID || databasePath === ":memory:") return;
   const uid = Number(env.RUN_AS_UID);
   const gid = Number(env.RUN_AS_GID ?? env.RUN_AS_UID);
   if (!Number.isInteger(uid) || !Number.isInteger(gid) || uid === 0) throw new Error("RUN_AS_UID/RUN_AS_GID must name a non-root user");
+  const root = resolve(env.DATA_ROOT ?? "/data");
   const dbPath = resolve(databasePath);
   const dir = dirname(dbPath);
-  if (dir === "/" || dir === "/app" || dir.startsWith("/app/") || dir === "/etc" || dir.startsWith("/usr")) {
-    throw new Error(`Refusing to take ownership of ${dir}; put DATABASE_PATH on a data volume such as /data`);
+  if (root === "/" || (dir !== root && !dir.startsWith(`${root}/`))) {
+    throw new Error(`Refusing to take ownership of ${dir}: DATABASE_PATH must be inside ${root} (set DATA_ROOT to change it)`);
   }
   mkdirSync(dir, { recursive: true });
-  chownSync(dir, uid, gid);
+  const realRoot = realpathSync(root);
+  const realDir = realpathSync(dir);
+  if (lstatSync(dir).isSymbolicLink() || (realDir !== realRoot && !realDir.startsWith(`${realRoot}/`))) {
+    throw new Error(`Refusing to take ownership of ${dir}: it resolves outside ${root}`);
+  }
+  lchownSync(dir, uid, gid);
   for (const suffix of DB_FILES) {
-    const file = join(dir, `${dbPath.slice(dir.length + 1)}${suffix}`);
+    const file = `${dbPath}${suffix}`;
     try {
-      // Never follow symlinks while still root.
-      if (lstatSync(file).isFile()) chownSync(file, uid, gid);
+      if (lstatSync(file).isFile()) lchownSync(file, uid, gid);
     } catch {
       // File does not exist yet.
     }
@@ -317,6 +340,23 @@ export function dropPrivileges(databasePath: string, env: NodeJS.ProcessEnv = pr
   process.setuid!(uid);
   if (process.getuid!() !== uid || process.getgid!() !== gid || process.getgroups!().some((g) => g !== gid)) {
     throw new Error("Privilege drop did not take effect");
+  }
+}
+
+/**
+ * Payments settled before modes were tracked: on live keys, ask Paystack about each one. A live
+ * payment is kept; a reference live Paystack does not know (a test payment) is voided. Network
+ * errors leave the payment for the next start.
+ */
+export async function reconcileLegacyPayments(store: Store, paystack: PaystackClient): Promise<void> {
+  for (const p of store.legacyPaidPayments()) {
+    try {
+      const tx = await paystack.verify(p.reference);
+      store.resolveLegacyPayment(p.reference, tx.status === "success" && tx.domain !== "test");
+    } catch (err) {
+      if (err instanceof PaystackError && (err.status === 404 || err.status === 400)) store.resolveLegacyPayment(p.reference, false);
+      else console.error(JSON.stringify({ event: "legacy_check_failed", reference: p.reference, message: (err as Error).message }));
+    }
   }
 }
 
@@ -334,6 +374,7 @@ export function main(): void {
   purge.unref();
 
   const paystack = createPaystackClient(config.paystackSecretKey, config.paystackBaseUrl);
+  if (config.keyMode === "live") void reconcileLegacyPayments(store, paystack);
   const app = createApp({ config, store, paystack });
   const server = app.listen(config.port, (err?: Error) => {
     if (err) {

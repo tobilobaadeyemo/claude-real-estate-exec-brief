@@ -135,7 +135,29 @@ test("payments-4: refund and chargeback webhooks take the credits back", async (
   const p2 = store.createPayment(account.id, DEFAULT_PACKS[0], "test");
   store.settlePayment(p2.reference, { amount: p2.amount_kobo, currency: "NGN" }, "test");
   assert.equal(await webhook({ event: "charge.dispute.create", data: { transaction: { reference: p2.reference } } }), 200);
+  assert.equal(store.getPayment(p2.reference)!.status, "disputed");
+  assert.equal(store.getAccount(account.id)!.credits, 0);
+  assert.equal(await webhook({ event: "charge.dispute.resolve", data: { resolution: "declined", transaction: { reference: p2.reference } } }), 200);
+  assert.equal(store.getPayment(p2.reference)!.status, "paid");
+  assert.equal(store.getAccount(account.id)!.credits, 3, "merchant won: credits restored");
+  assert.equal(await webhook({ event: "charge.dispute.create", data: { transaction: { reference: p2.reference } } }), 200);
+  assert.equal(await webhook({ event: "charge.dispute.resolve", data: { resolution: "merchant-accepted", transaction: { reference: p2.reference } } }), 200);
   assert.equal(store.getPayment(p2.reference)!.status, "reversed");
+  assert.equal(store.getAccount(account.id)!.credits, 0);
+});
+
+test("fix-review payments-3: partial refunds remove credits in proportion, rounded in the buyer's favour", () => {
+  const { account } = store.createAccount("partial@example.com");
+  const agency = DEFAULT_PACKS[2];
+  const p = store.createPayment(account.id, agency, "test");
+  store.settlePayment(p.reference, { amount: agency.price_kobo, currency: "NGN" }, "test");
+  assert.equal(store.refundPayment(p.reference, 200_000).removed, 0, "a ₦2,000 goodwill refund removes no credits");
+  assert.equal(store.getAccount(account.id)!.credits, 40);
+  assert.equal(store.refundPayment(p.reference, 7_800_000).removed, 20, "half refunded in total: half the credits");
+  assert.equal(store.getPayment(p.reference)!.status, "paid");
+  assert.equal(store.refundPayment(p.reference, 8_000_000).status, "refunded");
+  assert.equal(store.getAccount(account.id)!.credits, 0);
+  assert.equal(store.getPayment(p.reference)!.status, "reversed");
 });
 
 test("payments-7 / security-3: /paid shows only this payment's credits and throttles Paystack calls", async () => {
@@ -437,11 +459,123 @@ test("security-6: privilege drop never follows symlinks out of the data director
     writeFileSync(target, "x");
     symlinkSync(target, join(dir, "connector.db-wal"));
     const { spawnSync } = await import("node:child_process");
-    const script = `import("${new URL("../src/server.ts", import.meta.url).pathname}").then(m => m.dropPrivileges("${join(dir, "connector.db")}", { RUN_AS_UID: "1000" }))`;
+    const script = `import("${new URL("../src/server.ts", import.meta.url).pathname}").then(m => m.dropPrivileges("${join(dir, "connector.db")}", { RUN_AS_UID: "1000", DATA_ROOT: "${dir}" }))`;
     const run = spawnSync(process.execPath, ["--import", "tsx", "-e", script], { encoding: "utf8" });
     assert.equal(run.status, 0, run.stderr);
     assert.equal(statSync(target).uid, 0, "symlink target outside the data dir must stay root-owned");
     rmSync(dir, { recursive: true, force: true });
     rmSync(target, { force: true });
   }
+});
+
+// --- Fix-review follow-ups ----------------------------------------------------------------------
+
+test("fix-review payments-1 / payments-2: pre-1.3 databases migrate safely", async () => {
+  const Database = (await import("better-sqlite3")).default;
+  const dir = mkdtempSync(join(tmpdir(), "legacy-"));
+  const file = join(dir, "old.db");
+  const old = new Database(file);
+  old.exec(`
+    CREATE TABLE accounts (id TEXT PRIMARY KEY, email TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, credits INTEGER NOT NULL DEFAULT 0 CHECK (credits >= 0), preview_used INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
+    CREATE TABLE ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, account_id TEXT NOT NULL, delta INTEGER NOT NULL, reason TEXT NOT NULL, ref TEXT, created_at TEXT NOT NULL);
+    CREATE TABLE checkouts (id TEXT PRIMARY KEY, account_id TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL);
+    CREATE TABLE payments (reference TEXT PRIMARY KEY, account_id TEXT NOT NULL, pack_id TEXT NOT NULL, credits INTEGER NOT NULL, amount_kobo INTEGER NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, paid_at TEXT);
+    CREATE TABLE plans (id TEXT PRIMARY KEY, account_id TEXT NOT NULL, kind TEXT NOT NULL, listing_id TEXT, input_json TEXT NOT NULL, created_at TEXT NOT NULL);
+    INSERT INTO accounts VALUES ('acc_old', 'Old@Example.com', 'h', 10, 0, '2026-10-01T00:00:00Z');
+    INSERT INTO payments VALUES ('pay_testpaid', 'acc_old', 'starter', 10, 4500000, 'paid', '2026-10-01T00:00:00Z', '2026-10-01T00:01:00Z');
+    INSERT INTO payments VALUES ('pay_livepaid', 'acc_old', 'single', 3, 1500000, 'paid', '2026-10-01T00:00:00Z', '2026-10-01T00:01:00Z');
+    INSERT INTO payments VALUES ('pay_rejected', 'acc_old', 'single', 3, 1500000, 'rejected', '2026-10-01T00:00:00Z', NULL);
+  `);
+  old.close();
+  const upgraded = new Store(file);
+  assert.equal(upgraded.getPayment("pay_rejected")!.status, "review");
+  assert.equal(upgraded.getPayment("pay_testpaid")!.mode, "legacy");
+  const { reconcileLegacyPayments } = await import("../src/server.js");
+  const { PaystackError } = await import("../src/paystack.js");
+  const live: PaystackClient = {
+    async initialize() { throw new Error("unused"); },
+    async verify(reference) {
+      if (reference === "pay_livepaid") return { status: "success", amount: 1_500_000, currency: "NGN", reference, domain: "live" };
+      throw new PaystackError("Transaction reference not found", 404);
+    },
+  };
+  await reconcileLegacyPayments(upgraded, live);
+  assert.equal(upgraded.getPayment("pay_testpaid")!.status, "voided");
+  assert.equal(upgraded.getPayment("pay_livepaid")!.mode, "live");
+  assert.equal(upgraded.getAccount("acc_old")!.credits, 0, "the 10 test credits are gone");
+  assert.equal(upgraded.settlePayment("pay_rejected", { amount: 1_500_000, currency: "NGN" }, "live", true), "credited");
+  assert.equal(upgraded.getAccount("acc_old")!.credits, 3);
+  upgraded.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("fix-review security-1: a full limiter evicts the oldest key instead of locking new visitors out", async () => {
+  const { rateLimit } = await import("../src/server.js");
+  let key = "";
+  const limiter = rateLimit(5, 60_000, () => key);
+  let blocked = 0;
+  const res = { status() { blocked++; return this; }, set() { return this; }, send() { return this; } } as never;
+  for (let i = 0; i < 50_001; i++) {
+    key = `attacker-${i}`;
+    limiter({} as never, res, () => {});
+  }
+  key = "real-visitor";
+  let passed = false;
+  limiter({} as never, res, () => { passed = true; });
+  assert.equal(blocked, 0);
+  assert.equal(passed, true);
+});
+
+test("fix-review security-2: privilege drop refuses data directories outside DATA_ROOT or behind symlinks", async () => {
+  const { dropPrivileges } = await import("../src/server.js");
+  if (process.getuid?.() !== 0) return;
+  assert.throws(() => dropPrivileges("/lib/connector.db", { RUN_AS_UID: "1000" }), /must be inside \/data/);
+  const root = mkdtempSync(join(tmpdir(), "root-"));
+  const outside = mkdtempSync(join(tmpdir(), "outside-"));
+  symlinkSync(outside, join(root, "linked"));
+  assert.throws(() => dropPrivileges(join(root, "linked", "connector.db"), { RUN_AS_UID: "1000", DATA_ROOT: root }), /resolves outside|Refusing/);
+  assert.equal(statSync(outside).uid, 0);
+  rmSync(root, { recursive: true, force: true });
+  rmSync(outside, { recursive: true, force: true });
+});
+
+test("fix-review security-3: junk submissions on a shared buy link cannot block the owner's purchase", async () => {
+  const { token } = await signup("buylock@example.com");
+  const checkout = store.getOrCreateCheckout(accountOf(token).id);
+  for (let i = 0; i < 25; i++) {
+    await fetch(`${base}/buy/${checkout}`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "pack=nope", redirect: "manual" });
+  }
+  const real = await fetch(`${base}/buy/${checkout}`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "pack=agency", redirect: "manual" });
+  assert.equal(real.status, 303);
+});
+
+test("fix-review security-4: proxy_check logs only on request, so an over-count can be tested", async () => {
+  const lines: string[] = [];
+  const original = console.log;
+  console.log = (line: string) => { lines.push(String(line)); };
+  try {
+    await fetch(`${base}/`);
+    assert.equal(lines.filter((l) => l.includes("proxy_check")).length, 0);
+    await fetch(`${base}/?proxy_check=1`, { headers: { "x-forwarded-for": "1.2.3.4" } });
+  } finally {
+    console.log = original;
+  }
+  const entry = JSON.parse(lines.find((l) => l.includes("proxy_check"))!);
+  assert.equal(entry.forwarded_for, "1.2.3.4");
+  assert.notEqual(entry.client_ip, "1.2.3.4", "with TRUST_PROXY=0 a client-sent header is never trusted");
+});
+
+test("fix-review security-5: +tags and Gmail dots do not unlock extra previews", async () => {
+  const { emailKey } = await import("../src/store.js");
+  assert.equal(emailKey("Name+1@Gmail.com"), emailKey("n.a.m.e@gmail.com"));
+  assert.equal(emailKey("ops+x@company.ng"), "ops@company.ng");
+  const a = await signup("lagos.agent@gmail.com");
+  const b = await signup("lagosagent+2@gmail.com");
+  const ca = await connect(a.url);
+  const cb = await connect(b.url);
+  const args = { ...LK014 } as unknown as Record<string, unknown>;
+  assert.match(textOf(await ca.callTool({ name: "marketing_strategy", arguments: args })), /Free preview/);
+  assert.match(textOf(await cb.callTool({ name: "marketing_strategy", arguments: args })), /free preview has been used/);
+  await ca.close();
+  await cb.close();
 });

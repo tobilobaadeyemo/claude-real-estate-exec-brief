@@ -73,15 +73,15 @@ Summary:
 
 - Connector tokens are 256-bit random values; only SHA-256 hashes are stored. The URL is shown once.
 - Hosting platforms may log request paths, which contain the token. Restrict log access, or have header-capable clients use `/mcp` with `Authorization: Bearer`.
-- Webhooks are accepted only with a valid `x-paystack-signature` (HMAC-SHA512), then re-verified with the Paystack API. Credits are granted once per reference, only for NGN, for exactly the pack price (fees passed to the buyer are fine), and only in the key's mode. Anything else is held for review and logged, never silently dropped. Refunds and chargebacks reverse the credits.
-- Credits from test-mode payments are voided on the first start with a live key.
+- Webhooks are accepted only with a valid `x-paystack-signature` (HMAC-SHA512), then re-verified with the Paystack API. Credits are granted once per reference, only for NGN, for exactly the pack price (fees passed to the buyer are fine), and only in the key's mode. Anything else is held for review and logged, never silently dropped. Partial refunds remove credits in proportion; chargebacks hold the credits until the dispute resolves.
+- Credits from test-mode payments are voided on the first start with a live key; payments from before mode tracking are checked with Paystack and voided unless they are live.
 - SQLite runs in WAL mode with `synchronous=FULL`, so a settlement acknowledged to Paystack survives a host crash.
 - Charges are atomic and happen only after a result is computed and checked for finite numbers; balances cannot go negative.
-- Free previews cost nothing to serve (no LLM call) and are limited to one per email address.
-- One live checkout link per account (expired links are purged hourly), JSON-RPC batches are refused, and rate limiters sweep on a timer with a hard key cap, so a free account cannot fill the disk or slow the server.
+- Free previews cost nothing to serve (no LLM call) and are limited to one per mailbox (case, +tags, and Gmail dots are ignored). Emails are not verified, so this deters rather than prevents repeat previews; email verification is on the roadmap.
+- One live checkout link per account (expired links are purged hourly), JSON-RPC batches are refused, and rate limiters sweep on a timer with a capped key table that evicts the oldest entry, so a free account cannot fill the disk, slow the server, or lock other visitors out. Junk submissions on a buy link are rejected before they count against its owner.
 - `/paid` shows only the credits a payment added, and calls Paystack at most once per 30 seconds per payment.
 - User text is escaped in every table, so comp descriptions or channel names cannot rewrite computed figures.
-- The container starts as root only to take ownership of the data directory and database files (never following symlinks), then drops to uid 1000 with no supplementary groups. In production the server refuses to start without a valid Paystack key and an https base URL.
+- The container starts as root only to take ownership of the data directory and database files, and only inside `DATA_ROOT` (default `/data`), never following symlinks; then it drops to uid 1000 with no supplementary groups. In production the server refuses to start without a valid Paystack key and an https base URL.
 - The rate limiter and SQLite assume a single instance. Move to Postgres and a shared limiter before scaling out.
 
 ## Roadmap
