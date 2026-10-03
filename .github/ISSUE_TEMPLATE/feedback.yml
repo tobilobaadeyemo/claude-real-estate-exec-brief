@@ -1,0 +1,35 @@
+name: Feedback from a real listing
+description: Tell us how the skill performed on a real brief
+labels: [feedback]
+body:
+  - type: markdown
+    attributes:
+      value: "Do not paste client names, addresses, phone numbers, or other personal data."
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode
+      options: [marketing_strategy, market_brief, campaign_update]
+    validations:
+      required: true
+  - type: dropdown
+    id: audience
+    attributes:
+      label: Audience version
+      options: [leadership, client, team, not applicable]
+  - type: textarea
+    id: worked
+    attributes:
+      label: What worked
+  - type: textarea
+    id: wrong
+    attributes:
+      label: What was wrong or missing
+      description: Wrong numbers, weak recommendations, missing sections, Lagos context it got wrong.
+    validations:
+      required: true
+  - type: textarea
+    id: prompt
+    attributes:
+      label: Prompt used (redacted)
+      render: text

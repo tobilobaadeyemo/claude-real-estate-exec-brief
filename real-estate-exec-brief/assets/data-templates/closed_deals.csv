@@ -1,0 +1,3 @@
+deal_id,district,estate_or_street,street_tier,property_type,bedrooms,plot_sqm,built_sqm,title,condition,transaction,list_date,list_price_ngn,close_date,close_price_ngn,days_on_market,concessions,source
+D-0001,Lekki Phase 1,Example Close,inner_close,detached_duplex,5,450,500,governors_consent,dated,sale,2026-06-02,640000000,2026-08-05,590000000,64,none,internal
+D-0002,Lekki Phase 1,Example Street,main_road,detached_duplex,4,400,430,c_of_o,renovated,sale,2026-01-10,530000000,2026-03-09,520000000,58,seller pays legal fees,internal

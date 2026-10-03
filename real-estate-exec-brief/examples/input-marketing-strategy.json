@@ -1,0 +1,34 @@
+{
+  "mode": "marketing_strategy",
+  "audience": "leadership",
+  "transaction": "sale",
+  "presenter": "Marketing Strategist",
+  "listing": {
+    "id": "LK-014",
+    "location": {
+      "district": "Lekki Phase 1",
+      "lga": "Eti-Osa",
+      "street_tier": "inner_close"
+    },
+    "type": "detached_duplex",
+    "bedrooms": 5,
+    "bq": true,
+    "plot_sqm": 450,
+    "built_sqm": 520,
+    "title": "governors_consent",
+    "condition": "renovated_2024",
+    "amenities": ["pool", "solar_inverter_hybrid", "estate_security_24h"],
+    "owner_asking_price_ngn": 650000000,
+    "owner_floor_price_ngn": 560000000
+  },
+  "target_close_days": 90,
+  "launch_date": "2026-10-12",
+  "commission_rate": 0.05,
+  "budget_cap_ngn": 6000000,
+  "internal_data": {
+    "closed_deals": "closed_deals_2025_2026.csv",
+    "crm_leads": "crm_leads_last_12m.csv",
+    "cost_per_lead": "channel_cpl_last_12m.csv"
+  },
+  "presenter_notes": true
+}
