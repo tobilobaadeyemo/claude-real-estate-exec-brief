@@ -66,9 +66,11 @@ export function adjustComps(comps: Comp[], discountPct?: number): CompSet {
 export type PriceBand = "Below market" | "At market" | "Premium" | "Overpriced";
 
 export function priceBand(premium: number): PriceBand {
-  if (premium < -0.05) return "Below market";
-  if (premium <= 0.05) return "At market";
-  if (premium <= 0.1) return "Premium";
+  // Round away floating-point noise so exactly +/-5% and +10% land in the inclusive band.
+  const p = Math.round(premium * 1e9) / 1e9;
+  if (p < -0.05) return "Below market";
+  if (p <= 0.05) return "At market";
+  if (p <= 0.1) return "Premium";
   return "Overpriced";
 }
 
@@ -98,6 +100,8 @@ export interface Heat {
   indicative: boolean;
   realPriceChange?: number;
   realRentChange?: number;
+  /** Signals that could not be scored from the inputs supplied. */
+  missing: string[];
 }
 
 function band(value: number, up: number, down: number): -1 | 0 | 1 {
@@ -157,9 +161,16 @@ export function heatScore(inputs: HeatInputs = {}): Heat {
     });
   }
 
+  const missing: string[] = [];
+  if (realPriceChange === undefined) missing.push("real price change (needs nominal change and CPI)");
+  if (!(inputs.dom_now !== undefined && inputs.dom_year_ago)) missing.push("days on market vs a year ago");
+  if (!(inputs.listings_now !== undefined && inputs.listings_year_ago)) missing.push("active listings vs a year ago");
+  if (inputs.inquiries_change_pct === undefined) missing.push("inquiries per listing trend");
+  if (realRentChange === undefined) missing.push("real rent change (needs rent change and CPI)");
+
   const total = signals.reduce((sum, s) => sum + s.score, 0);
   const label: HeatLabel = signals.length === 0 ? "Unknown" : total >= 2 ? "Hot" : total <= -2 ? "Cold" : "Warm";
-  return { signals, total, label, indicative: signals.length > 0 && signals.length <= 3, realPriceChange, realRentChange };
+  return { signals, total, label, indicative: signals.length > 0 && signals.length <= 3, realPriceChange, realRentChange, missing };
 }
 
 export interface Confidence {

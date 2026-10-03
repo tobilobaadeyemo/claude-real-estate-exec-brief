@@ -1,5 +1,52 @@
 # Changelog
 
+## 1.3.0 (2026-10-03)
+
+Pre-launch audit of the paid connector: 5 review dimensions, every finding adversarially verified (68 confirmed, 2 refuted). All confirmed findings fixed, with regression tests in `connector/test/hardening.test.ts`.
+
+### Payments
+- Credits granted on the requested amount, so "pass fees to customers" no longer strands buyers; mismatches are held for review (never terminal) and logged
+- Test-mode payments refused on live keys; test credits voided on the first live start
+- Refund and chargeback webhooks reverse credits
+- `/paid` shows only this payment's credits, verifies at most every 30 s, and names the support email
+- `synchronous=FULL` for crash-safe settlements; unsigned non-JSON webhooks get 401
+- Admin CLI (`src/admin.ts`): review, reconcile, settle, grant, reverse, rotate, status
+
+### Abuse and metering
+- One live checkout link per account, hourly purge; JSON-RPC batches refused
+- Rate limiter sweeps on a timer with a hard cap; unknown tokens refused before any per-token state; purchases limited per account; configurable proxy hops
+- Re-running the same listing is free for 30 days; other audiences stay free
+- Strict calendar dates and finite numbers; campaign updates refused before launch without charge
+- Preview shows only data-gap flags; one preview per email; accurate billing messages; `rotate_connector_url` tool
+
+### Engine
+- List price kept inside the heat window; step kept within 3 to 5%; owner floor above market lists at the floor with no inverted band; keeping the ask keeps the ask; band edges drop just below (₦1.01B to ₦995M)
+- Leadership-only figures (fee ratio, guardrail) never reach client, team, or preview; team never sees the floor
+- Inclusive band edges; non-negative channel lines; incomplete budgets not totalled; contingency never ₦0
+- Market brief: reprice needs the days-on-market test, no unsupported "Hold", liquidity sale needs a hot or warm market, triggers fit the action
+- Campaign update: gates use their stated thresholds, offers scored from the price gate, past-close status, as-of date, objections
+- Honest reads for missing data, lease wording, January diaspora window, table-cell escaping, money formatting at unit boundaries
+
+### Follow-ups from the adversarial review of these fixes
+- Pre-1.3 databases: 'rejected' payments become reviewable; payments from before mode tracking are checked with Paystack on a live start and voided unless live
+- Partial refunds remove credits in proportion; chargebacks hold credits and restore them if the merchant wins
+- Full rate limiters evict the oldest key instead of refusing new visitors
+- Privilege drop only inside DATA_ROOT (default /data), refusing symlinked or outside directories
+- Junk buy-link submissions no longer count against the account's purchase limit
+- Proxy check runs on request (?proxy_check=1) with a GO-LIVE test that catches over-counting
+- Free preview keyed by normalized mailbox (+tags, Gmail dots); signup limit 20 per IP per hour
+
+### Second adversarial review (19 confirmed, 0 refuted)
+- Refunds: Paystack's string amounts parsed, so a partial refund no longer wipes the pack; each refund applied once on webhook redelivery; a refund without an amount is flagged for review instead of treated as full
+- Disputes: "auto-accepted" and reversed transactions count as the buyer winning; a partially accepted dispute refunds credits in proportion
+- Purchases: hourly per-IP ceiling across accounts; `reconcile` closes abandoned checkouts (they still credit if completed later) and `review` lists only the last 48 hours
+- Engine: team version never names the owner's floor; a default floor below every comp is labelled as the price step; +5% lists keep the track record; liquidity sale at exactly +5%; ₦1M to ₦10M amounts keep two decimals; free preview no longer hints at a reprice; reprice range uses standard money format; funnel and budget totals checked before charging
+- Ops: Docker-host instructions use production values; owner tools use `/app/dist/...` and are tested in Step 3; `/root/.ssh` for Render Shell; Windows `curl.exe` proxy check; TRUST_PROXY defaults to 3 on Render and is no longer reset by Blueprint syncs; privacy page describes the proxy check; Node 22.9+
+
+### Operations
+- Render deploys only after checks pass and ignores doc-only edits; keep-alive timeouts; listen failures exit non-zero; shutdown deadline; CI prints container logs on failure; `npm run dev` loads `.env`
+- GO-LIVE: pass-fees guidance, private URL while on test keys, proxy check, accurate Payouts on Demand and foreign card fees, admin commands
+
 ## 1.2.0 (2026-10-03)
 
 ### Added

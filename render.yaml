@@ -9,10 +9,13 @@ services:
     plan: starter
     region: frankfurt
     healthCheckPath: /healthz
-    autoDeploy: true
+    # Deploy only after GitHub checks pass; doc-only edits do not restart the payment service.
+    autoDeployTrigger: checksPass
     buildFilter:
       paths:
         - connector/**
+      ignoredPaths:
+        - connector/**/*.md
     disk:
       name: data
       mountPath: /data
@@ -20,8 +23,10 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      - key: TRUST_PROXY
-        value: "1"
+      # TRUST_PROXY (proxy hops in front of the app) defaults to 3 on Render and is deliberately not
+      # set here: a value set in this file would overwrite a dashboard correction on every Blueprint sync.
+      # Run the proxy check in connector/GO-LIVE.md (Step 3, item 8) and add TRUST_PROXY in the
+      # dashboard only if the check says to.
       - key: DATABASE_PATH
         value: /data/connector.db
       - key: PAYSTACK_SECRET_KEY

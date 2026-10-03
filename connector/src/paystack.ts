@@ -10,9 +10,14 @@ export interface InitializeParams {
 
 export interface VerifiedTransaction {
   status: string;
+  /** Amount actually charged, in kobo (includes fees if fees are passed to the customer). */
   amount: number;
+  /** Amount the checkout was created for, in kobo, when Paystack reports it. */
+  requestedAmount?: number;
   currency: string;
   reference: string;
+  /** "live" or "test": which Paystack mode processed the payment. */
+  domain?: string;
 }
 
 export interface PaystackClient {
@@ -22,14 +27,21 @@ export interface PaystackClient {
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
+/** A Paystack API error with its HTTP status (404 means the reference is unknown to this key's mode). */
+export class PaystackError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
 export function createPaystackClient(secretKey: string, baseUrl = "https://api.paystack.co", fetchImpl: FetchLike = fetch): PaystackClient {
   const headers = { Authorization: `Bearer ${secretKey}`, "Content-Type": "application/json" };
 
   async function call<T>(path: string, init: RequestInit): Promise<T> {
     if (!secretKey) throw new Error("PAYSTACK_SECRET_KEY is not configured");
     const res = await fetchImpl(`${baseUrl}${path}`, { ...init, headers, signal: AbortSignal.timeout(15_000) });
-    const body = (await res.json()) as { status: boolean; message?: string; data?: T };
-    if (!res.ok || !body.status || !body.data) throw new Error(`Paystack ${path} failed: ${body.message ?? res.status}`);
+    const body = (await res.json().catch(() => ({ status: false }))) as { status: boolean; message?: string; data?: T };
+    if (!res.ok || !body.status || !body.data) throw new PaystackError(`Paystack ${path.split("/").slice(0, 3).join("/")} failed: ${body.message ?? res.status}`, res.status);
     return body.data;
   }
 
@@ -49,15 +61,25 @@ export function createPaystackClient(secretKey: string, baseUrl = "https://api.p
       return { authorizationUrl: data.authorization_url };
     },
     async verify(reference) {
-      const data = await call<VerifiedTransaction>(`/transaction/verify/${encodeURIComponent(reference)}`, { method: "GET" });
-      return { status: data.status, amount: data.amount, currency: data.currency, reference: data.reference };
+      const data = await call<{ status: string; amount: number; requested_amount?: number; currency: string; reference: string; domain?: string }>(
+        `/transaction/verify/${encodeURIComponent(reference)}`,
+        { method: "GET" },
+      );
+      return {
+        status: data.status,
+        amount: data.amount,
+        requestedAmount: typeof data.requested_amount === "number" ? data.requested_amount : undefined,
+        currency: data.currency,
+        reference: data.reference,
+        domain: data.domain,
+      };
     },
   };
 }
 
 /** Paystack signs webhooks with HMAC-SHA512 of the raw body using the secret key. */
-export function verifyWebhookSignature(rawBody: Buffer, signature: string | undefined, secretKey: string): boolean {
-  if (!signature || !secretKey) return false;
+export function verifyWebhookSignature(rawBody: unknown, signature: string | undefined, secretKey: string): boolean {
+  if (!Buffer.isBuffer(rawBody) || !signature || !secretKey) return false;
   const expected = createHmac("sha512", secretKey).update(rawBody).digest("hex");
   const a = Buffer.from(expected, "utf8");
   const b = Buffer.from(signature, "utf8");
